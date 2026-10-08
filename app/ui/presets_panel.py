@@ -1,5 +1,8 @@
 """Lista de presets con miniatura de cómo queda la foto actual con cada uno.
 
+- Clic en un preset: vista previa (no cambia la foto ni el historial).
+- Botón «+»: añade el preset a la foto (se suma a lo que ya tiene).
+
 Dos pestañas: «Ajustes» (luz, color, efectos) e «IA» (usan restaurar rostros,
 retoque con máscaras o quitar el fondo). Las miniaturas de la pestaña IA
 muestran solo la parte de ajustes, con una marca «IA» (la parte de IA se
@@ -11,6 +14,8 @@ from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QLabel,
+    QToolButton,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -46,8 +51,44 @@ def _ai_badge(pix: QPixmap) -> QPixmap:
     return pix
 
 
+class PresetRow(QWidget):
+    """Fila de un preset: miniatura, nombre y botón «+» para añadirlo."""
+
+    add_clicked = Signal()
+
+    def __init__(self, name: str, add_tip: str, parent=None):
+        super().__init__(parent)
+        self.thumb = QLabel()
+        self.thumb.setFixedSize(THUMB_SIZE)
+        self.thumb.setStyleSheet("background: rgba(128, 128, 128, 40); border-radius: 3px;")
+        self.name = QLabel(name)
+        self.name.setWordWrap(True)
+        self.add = QToolButton()
+        self.add.setText("+")
+        font = self.add.font()
+        font.setPointSizeF(font.pointSizeF() * 1.5)
+        font.setBold(True)
+        self.add.setFont(font)
+        self.add.setFixedSize(30, 30)
+        self.add.setToolTip(add_tip)
+        self.add.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.add.clicked.connect(self.add_clicked.emit)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.addWidget(self.thumb)
+        layout.addWidget(self.name, 1)
+        layout.addWidget(self.add)
+        # Los clics fuera del botón llegan a la lista (vista previa).
+        for w in (self.thumb, self.name):
+            w.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    def set_pixmap(self, pix: QPixmap) -> None:
+        self.thumb.setPixmap(pix)
+
+
 class PresetPanel(QWidget):
-    apply_requested = Signal(object)  # Preset
+    apply_requested = Signal(object)  # Preset: añadirlo a la foto («+»)
+    preview_requested = Signal(object)  # Preset o None: vista previa (clic)
     save_requested = Signal()
     delete_requested = Signal(object)  # Preset
 
@@ -85,6 +126,7 @@ class PresetPanel(QWidget):
         save.clicked.connect(self.save_requested.emit)
         self.delete.clicked.connect(self._delete_current)
 
+        self.previewing = None  # preset en vista previa
         self._small: np.ndarray | None = None  # versión diminuta de la foto actual
         self._geometry = Settings()
         self._pending: list[QListWidgetItem] = []
@@ -116,17 +158,23 @@ class PresetPanel(QWidget):
             for title, group in (("Incluidos", builtin), ("Mis presets", mine)):
                 self._header(lst, title)
                 for preset in group:
-                    item = QListWidgetItem(preset.name.removeprefix("IA · "))
+                    item = QListWidgetItem()
                     item.setData(Qt.ItemDataRole.UserRole, preset)
                     item.setSizeHint(QSize(0, THUMB_SIZE.height() + 8))
                     if preset is NONE_PRESET:
-                        item.setToolTip("Quita los ajustes (también los de IA) y vuelve a la foto "
-                                        "original; conserva el recorte. También puedes usar Ctrl+Z.")
-                    elif category == "ia":
-                        item.setToolTip("Usa IA: la primera vez tarda unos segundos en calcularse")
-                    elif preset.builtin:
-                        item.setToolTip("Incluido con Lighteye · clic para aplicar")
+                        tip = "Clic: ver la foto original · +: quitar todos los ajustes (Ctrl+Z deshace)"
+                        add_tip = "Quitar todos los ajustes (conserva el recorte)"
+                    else:
+                        tip = "Clic: vista previa · +: añadirlo a la foto"
+                        if category == "ia":
+                            tip += " · usa IA: la primera vez tarda unos segundos"
+                        add_tip = "Añadir este preset a la foto (se suma a lo que ya tiene)"
+                    item.setToolTip(tip)
                     lst.addItem(item)
+                    row = PresetRow(preset.name.removeprefix("IA · "), add_tip)
+                    row.setToolTip(tip)
+                    row.add_clicked.connect(lambda p=preset: self._add(p))
+                    lst.setItemWidget(item, row)
             if not mine:
                 text = ("Ajusta una foto y pulsa\n«Guardar actual…» para crear\nlos tuyos."
                         if category == "ajustes" else
@@ -161,9 +209,12 @@ class PresetPanel(QWidget):
             pix = QPixmap.fromImage(array_to_qimage(rgb))
             if preset.category == "ia":
                 pix = _ai_badge(pix)
-            item.setIcon(QIcon(pix))
+            row = item.listWidget().itemWidget(item) if item.listWidget() else None
+            if row is not None:
+                row.set_pixmap(pix.scaled(THUMB_SIZE, Qt.AspectRatioMode.KeepAspectRatio,
+                                          Qt.TransformationMode.SmoothTransformation))
         except Exception:  # noqa: BLE001 — p. ej. un LUT que ya no existe: sin miniatura
-            item.setIcon(QIcon())
+            pass
 
     def _update_delete(self, item: QListWidgetItem | None) -> None:
         preset = item.data(Qt.ItemDataRole.UserRole) if item else None
@@ -173,8 +224,27 @@ class PresetPanel(QWidget):
 
     def _clicked(self, item: QListWidgetItem) -> None:
         preset = item.data(Qt.ItemDataRole.UserRole)
-        if preset is not None:  # el aviso "Sin presets todavía" no es un preset
-            self.apply_requested.emit(preset)
+        if preset is None:  # encabezados y avisos no son presets
+            return
+        if preset is self.previewing:
+            self.clear_preview()  # segundo clic: se quita la vista previa
+            return
+        self.previewing = preset
+        self.preview_requested.emit(preset)
+
+    def _add(self, preset) -> None:
+        self.clear_preview(emit=False)
+        self.apply_requested.emit(preset)
+
+    def clear_preview(self, emit: bool = True) -> None:
+        """Termina la vista previa (y quita la selección de la lista)."""
+        was = self.previewing is not None
+        self.previewing = None
+        for lst in self.lists.values():
+            lst.clearSelection()
+            lst.setCurrentItem(None)
+        if emit and was:
+            self.preview_requested.emit(None)
 
     def _delete_current(self) -> None:
         item = self.list.currentItem()

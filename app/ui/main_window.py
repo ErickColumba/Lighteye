@@ -93,6 +93,9 @@ class MainWindow(QMainWindow):
         self._bg_worker = None
         # Indicador de carga: tareas de IA en marcha → (texto, inicio, dispositivo)
         self._busy_tasks: dict[str, tuple] = {}
+        # Vista previa de un preset: ajustes que se muestran sin aplicarlos.
+        self._previewing: Settings | None = None
+        self._preview_name = ""
         self._busy_timer = QTimer(self, interval=500)
         self._busy_timer.timeout.connect(self._refresh_busy)
         self.erase_mode = False
@@ -166,6 +169,7 @@ class MainWindow(QMainWindow):
         self.presets = PresetPanel()
         self.presets.setEnabled(False)
         self.presets.apply_requested.connect(self.apply_preset)
+        self.presets.preview_requested.connect(self._preview_preset)
         self.presets.save_requested.connect(self.save_preset)
         self.presets.delete_requested.connect(self.delete_preset)
         presets_dock = QDockWidget("Presets", self)
@@ -255,6 +259,9 @@ class MainWindow(QMainWindow):
         self.crop_apply_action = A(None, "Aplicar recorte", "Return", self.apply_crop)
         self.crop_apply_action.setShortcuts([QKeySequence("Return"), QKeySequence("Enter")])
         self.crop_cancel_action = A(None, "Cancelar recorte", "Esc", self.cancel_crop)
+        self.preview_cancel_action = A(None, "Quitar la vista previa", "Esc",
+                                       lambda: self.presets.clear_preview())
+        self.preview_cancel_action.setEnabled(False)
         self.erase_done_action = A(None, "Terminar de borrar", "Return", self.leave_erase)
         self.erase_done_action.setShortcuts([QKeySequence("Return"), QKeySequence("Enter"),
                                              QKeySequence("Esc")])
@@ -374,6 +381,7 @@ class MainWindow(QMainWindow):
             self.cancel_crop()
         if self.erase_mode:
             self.leave_erase()
+        self._end_preview()
         self._commit_history()  # guarda la edición de la foto anterior
         self.renderer.cancel()
         if self.filmstrip.folder != loaded.path.parent:
@@ -424,6 +432,7 @@ class MainWindow(QMainWindow):
     # --- Ajustes ----------------------------------------------------------
 
     def _on_param_changed(self, key: str, value) -> None:
+        self._end_preview()
         self.settings[key] = value
         self._leave_before()  # al editar se vuelve a ver el resultado
         self._history_timer.start()
@@ -440,6 +449,7 @@ class MainWindow(QMainWindow):
 
     def _apply_settings(self, settings: Settings) -> None:
         """Sustituye todos los ajustes (deshacer, restablecer, …)."""
+        self._end_preview()
         self.settings = settings.copy()
         self.panel.set_settings(self.settings)
         self._leave_before()
@@ -536,7 +546,7 @@ class MainWindow(QMainWindow):
             if not draft:
                 self._settle_timer.stop()
             self._sync_source()
-            self.renderer.request(self.preview, self.settings, draft=draft, prep=self._source_prep(),
+            self.renderer.request(self.preview, self._shown_settings(), draft=draft, prep=self._source_prep(),
                                   post=self._background_post())
 
     def _sync_source(self) -> None:
@@ -565,12 +575,12 @@ class MainWindow(QMainWindow):
     # --- Rostros (IA) -------------------------------------------------------------
 
     def _face_key(self) -> str | None:
-        if self.loaded is None or self.settings["face_restore"] <= 0:
+        if self.loaded is None or self._shown_settings()["face_restore"] <= 0:
             return None
         from app.ai.faces import cache_key
 
-        return cache_key(self.loaded.path, bool(self.settings["face_codeformer"]),
-                         self.settings["face_fidelity"] / 100)
+        return cache_key(self.loaded.path, bool(self._shown_settings()["face_codeformer"]),
+                         self._shown_settings()["face_fidelity"] / 100)
 
     def _source_prep(self):
         """Trabajo de IA sobre el origen (pegar rostros, retoque), para que el
@@ -581,13 +591,13 @@ class MainWindow(QMainWindow):
         faces = self._faces.get(face_key) if face_key else None
         if face_key and faces is None:
             self._request_faces(face_key)
-        retouch = {k: self.settings[k] for k in RETOUCH_KEYS if not self.settings.is_default(k)}
+        retouch = {k: self._shown_settings()[k] for k in RETOUCH_KEYS if not self._shown_settings().is_default(k)}
         parses = None
         if retouch and self.loaded is not None:
             parses = self._parses.get(self.loaded.path)
             if parses is None:
                 self._request_parses()
-        strokes = self.settings["erase_strokes"]
+        strokes = self._shown_settings()["erase_strokes"]
         patches, erase_key = None, None
         if strokes and self.loaded is not None:
             from app.ai.inpaint import cache_key as erase_cache_key
@@ -596,7 +606,7 @@ class MainWindow(QMainWindow):
             patches = self._patches.get(erase_key)
             if patches is None:
                 self._request_erase(erase_key)
-        strength = self.settings["face_restore"] / 100
+        strength = self._shown_settings()["face_restore"] / 100
         if not faces and not parses and not patches:
             return None
 
@@ -605,7 +615,7 @@ class MainWindow(QMainWindow):
         from app.ai.retouch import apply_retouch
 
         transform = self._preview_transform()
-        snapshot = self.settings.copy()
+        snapshot = self._shown_settings().copy()
 
         def prepare(image, faces=faces, parses=parses, patches=patches):
             out = paste_patches(image, patches, transform) if patches else image
@@ -670,7 +680,7 @@ class MainWindow(QMainWindow):
     def _background_post(self):
         """Función que pone el fondo nuevo sobre la imagen ya calculada (en el
         hilo de trabajo), o None si no se quita el fondo."""
-        if self.loaded is None or not self.settings["bg_remove"] or self.crop_mode:
+        if self.loaded is None or not self._shown_settings()["bg_remove"] or self.crop_mode:
             return None
         mask = self._alphas.get(self.loaded.path)
         if mask is None:
@@ -680,8 +690,8 @@ class MainWindow(QMainWindow):
 
         h, w = self.loaded.image.shape[:2]
         transform = self._preview_transform()
-        edge = self.settings["bg_edge"] / 100
-        color = self.settings["bg_color"]
+        edge = self._shown_settings()["bg_edge"] / 100
+        color = self._shown_settings()["bg_color"]
 
         def post(rgb):
             ph, pw = rgb.shape[:2]
@@ -745,6 +755,7 @@ class MainWindow(QMainWindow):
             return
         if self.crop_mode:
             self.apply_crop()
+        self._end_preview()
         self._commit_history()
         self.set_view_mode("after")
         self.erase_mode = True
@@ -835,17 +846,17 @@ class MainWindow(QMainWindow):
         from app.ui.ai_worker import FaceWorker
 
         if not (runtime.model_available("yunet") and runtime.model_available(
-                "codeformer" if self.settings["face_codeformer"] else "gfpgan")):
+                "codeformer" if self._shown_settings()["face_codeformer"] else "gfpgan")):
             self.statusBar().showMessage("Restaurar rostros no disponible: faltan PyTorch o los modelos "
                                          "(python tools/download_models.py)", 8000)
             return
-        worker = FaceWorker(self.loaded.path, self.loaded.image, bool(self.settings["face_codeformer"]),
-                            self.settings["face_fidelity"] / 100, key, self)
+        worker = FaceWorker(self.loaded.path, self.loaded.image, bool(self._shown_settings()["face_codeformer"]),
+                            self._shown_settings()["face_fidelity"] / 100, key, self)
         worker.done.connect(self._faces_ready)
         worker.failed.connect(lambda msg: (self._clear_face_worker(),
                                            self._task_failed("faces", "No se pudieron restaurar los rostros", msg)))
         self._task_started("faces", "Restaurando rostros con IA…",
-                           "codeformer" if self.settings["face_codeformer"] else "gfpgan")
+                           "codeformer" if self._shown_settings()["face_codeformer"] else "gfpgan")
         self._face_worker = worker
         worker.start()
 
@@ -911,6 +922,7 @@ class MainWindow(QMainWindow):
         if self.preview is None or self.crop_mode:
             self.crop_action.setChecked(self.crop_mode)
             return
+        self._end_preview()
         self._commit_history()
         self._crop_backup = self.settings.copy()
         self.set_view_mode("after")
@@ -1175,6 +1187,41 @@ class MainWindow(QMainWindow):
         worker.finished_all.connect(done)
         self._export_worker = worker
         worker.start()
+
+    # --- Vista previa de presets ------------------------------------------------
+
+    def _shown_settings(self) -> Settings:
+        """Ajustes con los que se calcula la imagen: los de la foto o, durante
+        la vista previa de un preset, los de la foto + el preset."""
+        return self._previewing if self._previewing is not None else self.settings
+
+    def _preview_preset(self, preset) -> None:
+        if preset is None or self.preview is None:
+            self._end_preview()
+            self._request_render()
+            return
+        if self.crop_mode:
+            self.apply_crop()
+        if self.erase_mode:
+            self.leave_erase()
+        self._commit_history()
+        self._previewing = stack_preset(self.settings, preset)
+        self._preview_name = preset.name.removeprefix("IA · ")
+        self.preview_cancel_action.setEnabled(True)
+        self.set_view_mode("after")
+        label = ("Vista previa: foto original" if not preset.values else
+                 f"Vista previa: {self._preview_name}")
+        self.viewer.set_label(f"{label}  ·  pulsa + para aplicarlo · Esc para salir")
+        self._request_render()
+
+    def _end_preview(self) -> None:
+        """Quita la vista previa (sin aplicar nada). No pide un nuevo cálculo."""
+        if self._previewing is None:
+            return
+        self._previewing = None
+        self.preview_cancel_action.setEnabled(False)
+        self.viewer.set_label("Antes" if self.view_mode == "before" else "")
+        self.presets.clear_preview(emit=False)
 
     # --- Presets ----------------------------------------------------------------
 
