@@ -42,17 +42,13 @@ def load_image(path: str | Path) -> LoadedImage:
 
 def _load_raster(path: Path) -> LoadedImage:
     # imdecode en vez de imread para no depender de la codificación de la ruta.
+    # ANYDEPTH conserva los 16 bits; sin IMREAD_UNCHANGED, OpenCV aplica la
+    # orientación EXIF (fotos de móvil en vertical). El canal alfa se descarta.
     data = np.fromfile(path, dtype=np.uint8)
-    img = cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
+    img = cv2.imdecode(data, cv2.IMREAD_ANYDEPTH | cv2.IMREAD_COLOR)
     if img is None:
         raise ValueError(f"No se pudo leer la imagen: {path.name}")
-
-    if img.ndim == 2:
-        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-    elif img.shape[2] == 4:
-        img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
-    else:
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
     bits = 16 if img.dtype == np.uint16 else 8
     if img.dtype == np.uint8:

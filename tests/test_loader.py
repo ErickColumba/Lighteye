@@ -52,3 +52,27 @@ def test_make_preview_limits_long_side():
     assert prev.shape[0] == round(3000 * 1600 / 4500)
     small = np.zeros((100, 50, 3), np.float32)
     assert make_preview(small, 1600).shape == small.shape
+
+
+def test_jpeg_exif_orientation_is_applied(tmp_path):
+    import piexif
+
+    bgr = np.zeros((20, 40, 3), np.uint8)
+    bgr[:, :10] = (0, 0, 255)  # franja roja a la izquierda
+    path = tmp_path / "movil.jpg"
+    cv2.imencode(".jpg", bgr)[1].tofile(path)
+    exif = piexif.dump({"0th": {piexif.ImageIFD.Orientation: 6}})  # girar 90° horario
+    piexif.insert(exif, str(path))
+
+    loaded = load_image(path)
+    assert loaded.image.shape[:2] == (40, 20)
+    assert loaded.image[2, 10, 0] > 0.5  # la franja roja queda arriba
+
+
+def test_grayscale_and_alpha_png(tmp_path):
+    gray = np.full((5, 6), 200, np.uint8)
+    cv2.imencode(".png", gray)[1].tofile(tmp_path / "g.png")
+    assert load_image(tmp_path / "g.png").image.shape == (5, 6, 3)
+    rgba = np.zeros((5, 6, 4), np.uint8)
+    cv2.imencode(".png", rgba)[1].tofile(tmp_path / "a.png")
+    assert load_image(tmp_path / "a.png").image.shape == (5, 6, 3)
