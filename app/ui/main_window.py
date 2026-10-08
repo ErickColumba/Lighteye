@@ -41,6 +41,8 @@ class MainWindow(QMainWindow):
         self.preview = None
         self.settings = Settings()
         self.shown_rgb = None  # última imagen calculada (sRGB uint8)
+        self.before_rgb = None  # la foto sin ajustes, para comparar
+        self.show_before = False
 
         self.viewer = ImageViewer(self)
         self.setCentralWidget(self.viewer)
@@ -78,6 +80,9 @@ class MainWindow(QMainWindow):
         self._add_action(edit_menu, "&Restablecer todos los ajustes", "Ctrl+R", self.reset_all)
 
         view_menu = self.menuBar().addMenu("&Ver")
+        self.before_action = self._add_action(view_menu, "Antes / &Después", "\\", self.toggle_before)
+        self.before_action.setCheckable(True)
+        view_menu.addSeparator()
         self._add_action(view_menu, "&Ajustar a la ventana", "Ctrl+0", self.viewer.fit)
         self._add_action(view_menu, "Tamaño &real (100 %)", "Ctrl+1", self.viewer.zoom_100)
 
@@ -115,6 +120,8 @@ class MainWindow(QMainWindow):
         self.panel.set_settings(self.settings)
         self.panel.setEnabled(True)
         rgb = to_display_u8(self.preview)
+        self.before_rgb = rgb
+        self._set_before(False)
         self._on_rendered(rgb, compute_histogram(rgb))
         self.viewer.fit()
 
@@ -125,8 +132,9 @@ class MainWindow(QMainWindow):
 
     # --- Ajustes ----------------------------------------------------------
 
-    def _on_param_changed(self, key: str, value: float) -> None:
+    def _on_param_changed(self, key: str, value) -> None:
         self.settings[key] = value
+        self._set_before(False)  # al editar se vuelve a ver el resultado
         self._request_render()
 
     def reset_all(self) -> None:
@@ -144,11 +152,24 @@ class MainWindow(QMainWindow):
         self.histogram.set_histogram(histogram)
         self._refresh_view()
 
+    def toggle_before(self) -> None:
+        self._set_before(not self.show_before)
+
+    def _set_before(self, on: bool) -> None:
+        on = on and self.before_rgb is not None
+        if on == self.show_before:
+            return
+        self.show_before = on
+        self.before_action.setChecked(on)
+        self.viewer.set_label("Antes" if on else "")
+        self._refresh_view()
+
     def _refresh_view(self) -> None:
-        """Muestra la última imagen calculada, con o sin el aviso de recorte."""
+        """Muestra la última imagen calculada (o la original en modo "Antes"),
+        con o sin el aviso de recorte."""
         if self.shown_rgb is None:
             return
-        rgb = self.shown_rgb
+        rgb = self.before_rgb if self.show_before else self.shown_rgb
         if self.histogram.show_clipping:
             rgb = clipping_overlay(rgb)
         self.viewer.set_image(rgb)

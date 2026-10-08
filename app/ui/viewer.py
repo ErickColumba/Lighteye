@@ -1,8 +1,8 @@
 """Visor de imagen con zoom (rueda del ratón) y desplazamiento (arrastrar)."""
 
 import numpy as np
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 
 MIN_ZOOM = 0.05
@@ -32,6 +32,29 @@ class ImageViewer(QGraphicsView):
         self.setFrameShape(QGraphicsView.Shape.NoFrame)
 
         self._fit_mode = True
+        self._label = ""
+
+    def set_label(self, text: str) -> None:
+        """Texto fijo en la esquina del visor (p. ej. "Antes")."""
+        self._label = text
+        self.viewport().update()
+
+    def drawForeground(self, painter: QPainter, rect) -> None:
+        if not self._label:
+            return
+        painter.save()
+        painter.resetTransform()  # coordenadas del viewport, no de la escena
+        font = QFont(painter.font())
+        font.setPointSize(11)
+        font.setBold(True)
+        painter.setFont(font)
+        box = QRectF(12, 12, painter.fontMetrics().horizontalAdvance(self._label) + 20, 28)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 170))
+        painter.drawRoundedRect(box, 6, 6)
+        painter.setPen(QColor(255, 255, 255))
+        painter.drawText(box, Qt.AlignmentFlag.AlignCenter, self._label)
+        painter.restore()
 
     def has_image(self) -> bool:
         return not self._item.pixmap().isNull()
