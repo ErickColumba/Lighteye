@@ -1,0 +1,9 @@
+PySide6>=6.8
+numpy>=2.0
+# Versión headless: la opencv-python normal trae sus propios plugins de Qt,
+# que chocan con los de PySide6.
+opencv-python-headless>=4.10
+rawpy>=0.23
+Pillow>=10.0
+piexif>=1.1
+pytest>=8.0
