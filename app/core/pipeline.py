@@ -1,5 +1,8 @@
 """Aplica los ajustes en un orden fijo (ver docs/funciones.md, sección 4).
 
+La geometría (recorte, giros) no está aquí: se aplica antes, al preparar la
+imagen de origen (ver geometry.py y render_full).
+
 Orden: balance de blancos → exposición → tonos → color → detalle → efectos.
 Un paso se salta si todos sus ajustes están en el valor por defecto.
 """
@@ -7,6 +10,7 @@ Un paso se salta si todos sus ajustes están en el valor por defecto.
 import numpy as np
 
 from app.core import adjustments as adj
+from app.core.geometry import apply_geometry
 from app.core.settings import HSL_KEYS, Settings
 
 
@@ -45,3 +49,8 @@ def process(img: np.ndarray, settings: Settings) -> np.ndarray:
     if out is img:
         out = img.copy()
     return out.astype(np.float32, copy=False)
+
+
+def render_full(img: np.ndarray, settings: Settings) -> np.ndarray:
+    """Geometría + ajustes sobre la imagen completa (para exportar)."""
+    return process(apply_geometry(img, settings), settings)

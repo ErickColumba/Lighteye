@@ -71,6 +71,15 @@ PARAMS += [
     Param("split_balance", "Equilibrio", "Efectos", -100, 100, tab="Virado"),
 ]
 
+# Geometría: no aparece en el panel de ajustes, la maneja la herramienta de
+# recorte (por eso su grupo no está en GROUPS).
+PARAMS += [
+    Param("rotate", "Giro 90°", "Geometría", 0, 3),
+    Param("flip_h", "Voltear horizontal", "Geometría", 0, 1, kind="toggle"),
+    Param("flip_v", "Voltear vertical", "Geometría", 0, 1, kind="toggle"),
+    Param("angle", "Enderezar", "Geometría", -45, 45, step=0.1),
+]
+
 # HSL por color: (clave, nombre, centro del rango de tono en grados).
 HSL_COLORS = [
     ("red", "Rojo", 0), ("orange", "Naranja", 30), ("yellow", "Amarillo", 60),
@@ -94,6 +103,7 @@ CURVE_CHANNELS = ("rgb", "r", "g", "b")
 EXTRA_DEFAULTS: dict = {
     "curves": {ch: IDENTITY_CURVE for ch in CURVE_CHANNELS},
     "lut_path": None,  # ruta a un archivo .cube
+    "crop": (0.0, 0.0, 1.0, 1.0),  # x, y, ancho, alto normalizados
 }
 
 
@@ -176,6 +186,13 @@ def _normalize_extra(key: str, value):
         return {ch: normalize_curve(value.get(ch, IDENTITY_CURVE)) for ch in CURVE_CHANNELS}
     if key == "lut_path":
         return str(value) if value else None
+    if key == "crop":
+        x, y, w, h = (float(v) for v in value)
+        x = min(0.99, max(0.0, x))
+        y = min(0.99, max(0.0, y))
+        w = min(1.0 - x, max(0.01, w))
+        h = min(1.0 - y, max(0.01, h))
+        return (x, y, w, h)
     return value
 
 

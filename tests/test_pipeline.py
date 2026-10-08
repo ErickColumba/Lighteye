@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 
 from app.core.color import linear_to_srgb
+from app.core.geometry import GEOMETRY_KEYS
 from app.core.loader import make_preview
 from app.core.pipeline import STEPS, process
 from app.core.settings import PARAMS, Settings
@@ -29,7 +30,7 @@ def _scene(h, w):
 
 def test_every_param_belongs_to_a_pipeline_step():
     used = {k for keys, _ in STEPS for k in keys}
-    assert {p.key for p in PARAMS} | {"curves", "lut_path"} == used
+    assert {p.key for p in PARAMS} | {"curves", "lut_path", "crop"} == used | set(GEOMETRY_KEYS)
 
 
 def test_full_resolution_matches_preview():

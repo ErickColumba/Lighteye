@@ -5,6 +5,8 @@ from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 
+from app.ui.crop_overlay import CropOverlay
+
 MIN_ZOOM = 0.05
 MAX_ZOOM = 16.0
 
@@ -23,6 +25,9 @@ class ImageViewer(QGraphicsView):
         self._item = QGraphicsPixmapItem()
         self._item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
         self._scene.addItem(self._item)
+        self.crop_overlay = CropOverlay()
+        self.crop_overlay.setVisible(False)
+        self._scene.addItem(self.crop_overlay)
         self.setScene(self._scene)
 
         self.setBackgroundBrush(QColor(30, 30, 30))
@@ -30,6 +35,9 @@ class ImageViewer(QGraphicsView):
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setFrameShape(QGraphicsView.Shape.NoFrame)
+        # Se desplaza arrastrando; las barras sobran (y la escena tiene margen).
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         self._fit_mode = True
         self._label = ""
@@ -62,7 +70,8 @@ class ImageViewer(QGraphicsView):
     def set_image(self, rgb_u8: np.ndarray, reset_view: bool = False) -> None:
         """Muestra una imagen sRGB uint8. Conserva el zoom salvo reset_view."""
         self._item.setPixmap(QPixmap.fromImage(array_to_qimage(rgb_u8)))
-        self._scene.setSceneRect(self._item.boundingRect())
+        # Margen alrededor para poder agarrar los tiradores del recorte en el borde.
+        self._scene.setSceneRect(self._item.boundingRect().adjusted(-40, -40, 40, 40))
         if reset_view or self._fit_mode:
             self.fit()
 
@@ -88,7 +97,8 @@ class ImageViewer(QGraphicsView):
         self.scale(factor, factor)
 
     def mouseDoubleClickEvent(self, event):
-        self.fit()
+        if not self.crop_overlay.isVisible():
+            self.fit()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

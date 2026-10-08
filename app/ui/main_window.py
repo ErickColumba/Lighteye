@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QRectF, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -15,16 +15,26 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.color import to_display_u8
+from app.core.geometry import (
+    FULL_CROP,
+    apply_geometry,
+    geometry_preview,
+    geometry_signature,
+    is_identity,
+    final_size,
+)
 from app.core.histogram import clipping_overlay, compute_histogram
 from app.core.history import History
 from app.core.loader import (
     SUPPORTED_EXTENSIONS,
+    PREVIEW_LONG_SIDE,
     LoadedImage,
     is_supported,
     load_image,
     make_preview,
 )
 from app.core.settings import Settings
+from app.ui.crop_tools import CropToolbar
 from app.ui.histogram import HistogramWidget
 from app.ui.panels import AdjustmentPanel
 from app.ui.renderer import PreviewRenderer
@@ -39,7 +49,11 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
 
         self.loaded: LoadedImage | None = None
-        self.preview = None
+        self.base_preview = None  # vista previa de la foto sin geometría
+        self.preview = None  # imagen de origen que procesa el pipeline
+        self._source_sig = None  # geometría con la que se calculó self.preview
+        self.crop_mode = False
+        self._crop_backup: Settings | None = None
         self.settings = Settings()
         self.shown_rgb = None  # última imagen calculada (sRGB uint8)
         self.before_rgb = None  # la foto sin ajustes, para comparar
@@ -69,6 +83,20 @@ class MainWindow(QMainWindow):
         dock.setWidget(side)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
 
+        self.crop_tools = CropToolbar(self)
+        self.crop_tools.setVisible(False)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.crop_tools)
+        self.crop_tools.aspect_changed.connect(self._crop_aspect_changed)
+        self.crop_tools.angle_changed.connect(lambda a: self._crop_geometry_changed(angle=a))
+        self.crop_tools.rotate_requested.connect(
+            lambda d: self._crop_geometry_changed(rotate=(self.settings["rotate"] + d) % 4))
+        self.crop_tools.flip_requested.connect(
+            lambda axis: self._crop_geometry_changed(**{f"flip_{axis}": 1 - self.settings[f"flip_{axis}"]}))
+        self.crop_tools.reset_requested.connect(self._crop_reset)
+        self.crop_tools.cancel_requested.connect(self.cancel_crop)
+        self.crop_tools.apply_requested.connect(self.apply_crop)
+        self.viewer.crop_overlay.rect_changed.connect(self._crop_rect_changed)
+
         self.renderer = PreviewRenderer(self)
         self.renderer.rendered.connect(self._on_rendered)
         self.renderer.failed.connect(lambda msg: self.statusBar().showMessage(f"Error: {msg}"))
@@ -88,6 +116,15 @@ class MainWindow(QMainWindow):
         self.redo_action.setShortcuts([QKeySequence("Ctrl+Shift+Z"), QKeySequence("Ctrl+Y")])
         edit_menu.addSeparator()
         self._add_action(edit_menu, "R&establecer todos los ajustes", "Ctrl+R", self.reset_all)
+        edit_menu.addSeparator()
+        self.crop_action = self._add_action(edit_menu, "Re&cortar y enderezar", "C", self.toggle_crop)
+        self.crop_action.setCheckable(True)
+        # Intro / Esc del modo recorte: activas solo mientras se recorta.
+        self.crop_apply_action = self._add_action(self, "Aplicar recorte", "Return", self.apply_crop)
+        self.crop_apply_action.setShortcuts([QKeySequence("Return"), QKeySequence("Enter")])
+        self.crop_cancel_action = self._add_action(self, "Cancelar recorte", "Esc", self.cancel_crop)
+        for a in (self.crop_apply_action, self.crop_cancel_action):
+            a.setEnabled(False)
         self._update_history_actions()
 
         view_menu = self.menuBar().addMenu("&Ver")
@@ -101,7 +138,7 @@ class MainWindow(QMainWindow):
         action = QAction(text, self)
         action.setShortcut(shortcut)
         action.triggered.connect(slot)
-        menu.addAction(action)
+        menu.addAction(action)  # menu puede ser la ventana: atajo sin entrada de menú
         return action
 
     # --- Abrir -----------------------------------------------------------
@@ -124,16 +161,20 @@ class MainWindow(QMainWindow):
             return
         QApplication.restoreOverrideCursor()
 
+        if self.crop_mode:
+            self._leave_crop_mode()
         self.renderer.cancel()
         self.loaded = loaded
-        self.preview = make_preview(loaded.image)
+        self.base_preview = make_preview(loaded.image)
+        self.preview = self.base_preview
         self.settings = Settings()
+        self._source_sig = geometry_signature(self.settings)
         self._history_timer.stop()
         self.history = History(self.settings)
         self._update_history_actions()
         self.panel.set_settings(self.settings)
         self.panel.setEnabled(True)
-        rgb = to_display_u8(self.preview)
+        rgb = to_display_u8(self.base_preview)
         self.before_rgb = rgb
         self._set_before(False)
         self._on_rendered(rgb, compute_histogram(rgb))
@@ -177,10 +218,15 @@ class MainWindow(QMainWindow):
         self.redo_action.setEnabled(self.history.can_redo())
 
     def undo(self) -> None:
+        if self.crop_mode:
+            self.cancel_crop()
+            return
         self._commit_history()  # primero se guarda lo que aún estaba pendiente
         self._step_history(self.history.undo(), "Deshecho")
 
     def redo(self) -> None:
+        if self.crop_mode:
+            return
         self._commit_history()
         self._step_history(self.history.redo(), "Rehecho")
 
@@ -195,7 +241,125 @@ class MainWindow(QMainWindow):
     def _request_render(self) -> None:
         # La interfaz nunca procesa la imagen: solo pide un nuevo cálculo.
         if self.preview is not None:
+            self._sync_source()
             self.renderer.request(self.preview, self.settings)
+
+    def _sync_source(self) -> None:
+        """Recalcula la imagen de origen si cambió la geometría.
+
+        En modo recorte se usa la vista previa girada pero sin recortar (rápido).
+        Con un recorte aplicado se parte de la resolución completa, para que
+        un recorte pequeño no se vea borroso.
+        """
+        sig = geometry_signature(self.settings, with_crop=not self.crop_mode)
+        if sig == self._source_sig:
+            return
+        if self.crop_mode:
+            self.preview = apply_geometry(self.base_preview, self.settings, with_crop=False)
+        elif is_identity(self.settings):
+            self.preview = self.base_preview
+        else:
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                self.preview = geometry_preview(self.loaded.image, self.settings, PREVIEW_LONG_SIDE)
+            finally:
+                QApplication.restoreOverrideCursor()
+        self._source_sig = sig
+
+    # --- Recorte y enderezado -------------------------------------------------
+
+    def toggle_crop(self) -> None:
+        if self.crop_mode:
+            self.apply_crop()
+        else:
+            self.enter_crop()
+
+    def enter_crop(self) -> None:
+        if self.preview is None or self.crop_mode:
+            self.crop_action.setChecked(self.crop_mode)
+            return
+        self._commit_history()
+        self._crop_backup = self.settings.copy()
+        self.crop_mode = True
+        self._set_before(False)
+        self.panel.setEnabled(False)
+        self.crop_action.setChecked(True)
+        for a in (self.crop_apply_action, self.crop_cancel_action):
+            a.setEnabled(True)
+        self.crop_tools.set_angle(self.settings["angle"])
+        self.crop_tools.setVisible(True)
+        self._request_render()
+        self._update_overlay()
+        self.viewer.crop_overlay.setVisible(True)
+        self.viewer.fit()
+
+    def apply_crop(self) -> None:
+        if not self.crop_mode:
+            return
+        self._leave_crop_mode()
+        self._request_render()
+        self.viewer.fit()
+        self._commit_history()
+
+    def cancel_crop(self) -> None:
+        if not self.crop_mode:
+            return
+        self._leave_crop_mode()
+        self._apply_settings(self._crop_backup)
+        self.viewer.fit()
+
+    def _leave_crop_mode(self) -> None:
+        self.crop_mode = False
+        self.viewer.crop_overlay.setVisible(False)
+        self.crop_tools.setVisible(False)
+        self.crop_action.setChecked(False)
+        for a in (self.crop_apply_action, self.crop_cancel_action):
+            a.setEnabled(False)
+        self.panel.setEnabled(True)
+
+    def _update_overlay(self) -> None:
+        """Coloca el marco según el recorte guardado y la imagen mostrada."""
+        h, w = self.preview.shape[:2]
+        x, y, cw, ch = self.settings["crop"]
+        overlay = self.viewer.crop_overlay
+        overlay.aspect = self.crop_tools.ratio(w, h)
+        overlay.set_bounds(QRectF(0, 0, w, h), QRectF(x * w, y * h, cw * w, ch * h))
+        self.settings["crop"] = overlay.normalized()
+        self._show_crop_size()
+
+    def _crop_rect_changed(self, _rect) -> None:
+        if self.crop_mode:
+            self.settings["crop"] = self.viewer.crop_overlay.normalized()
+            self._show_crop_size()
+
+    def _crop_aspect_changed(self) -> None:
+        h, w = self.preview.shape[:2]
+        self.viewer.crop_overlay.set_aspect(self.crop_tools.ratio(w, h))
+
+    def _crop_geometry_changed(self, **changes) -> None:
+        # Girar o voltear invalida el marco: se vuelve a la foto completa.
+        if "rotate" in changes or any(k.startswith("flip") for k in changes):
+            self.settings["crop"] = FULL_CROP
+        for key, value in changes.items():
+            self.settings[key] = value
+        self._request_render()
+        self._update_overlay()
+
+    def _crop_reset(self) -> None:
+        for key in ("rotate", "flip_h", "flip_v", "angle"):
+            self.settings.reset(key)
+        self.settings["crop"] = FULL_CROP
+        self.crop_tools.aspect.setCurrentIndex(0)
+        self.crop_tools.portrait.setChecked(False)
+        self.crop_tools.set_angle(0)
+        self._request_render()
+        self._update_overlay()
+
+    def _show_crop_size(self) -> None:
+        """Tamaño final del recorte en píxeles de la foto original."""
+        h, w = self.loaded.image.shape[:2]
+        fw, fh = final_size(w, h, self.settings)
+        self.statusBar().showMessage(f"Recorte: {fw} × {fh} px")
 
     def _on_rendered(self, rgb, histogram) -> None:
         self.shown_rgb = rgb
