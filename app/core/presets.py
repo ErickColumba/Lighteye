@@ -44,9 +44,13 @@ class Preset:
 NONE_PRESET = Preset("Ninguno (original)", Path(), {}, builtin=True)
 
 
+# Propios de cada foto: no se copian ni se guardan en presets.
+PHOTO_KEYS = (*GEOMETRY_KEYS, "erase_strokes")
+
+
 def look_values(settings: Settings) -> dict:
-    """Ajustes que forman parte de un preset (todo menos la geometría)."""
-    return {k: v for k, v in settings.non_default().items() if k not in GEOMETRY_KEYS}
+    """Ajustes que forman parte de un preset (todo menos geometría y borrados)."""
+    return {k: v for k, v in settings.non_default().items() if k not in PHOTO_KEYS}
 
 
 def apply_look(settings: Settings, values: dict) -> Settings:
@@ -57,7 +61,7 @@ def apply_look(settings: Settings, values: dict) -> Settings:
     así el resultado es predecible.
     """
     result = Settings(values)
-    for key in GEOMETRY_KEYS:
+    for key in PHOTO_KEYS:
         result[key] = settings[key]
     return result
 

@@ -6,7 +6,8 @@ pocos KB y el historial puede ser largo.
 
 from app.core.settings import PARAMS_BY_KEY, Settings
 
-EXTRA_LABELS = {"curves": "Curvas", "lut_path": "LUT", "crop": "Recorte"}
+EXTRA_LABELS = {"curves": "Curvas", "lut_path": "LUT", "crop": "Recorte",
+                "erase_strokes": "Borrar objetos"}
 
 
 def describe_changes(before: Settings, after: Settings) -> str:

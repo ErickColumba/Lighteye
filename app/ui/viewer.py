@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QGraphicsView,
 )
 
+from app.ui.brush import BrushOverlay
 from app.ui.crop_overlay import CropOverlay
 
 MIN_ZOOM = 0.05
@@ -135,6 +136,9 @@ class ImageViewer(QGraphicsView):
         self.compare_divider = CompareDivider()
         self.compare_divider.setVisible(False)
         self._scene.addItem(self.compare_divider)
+        self.brush = BrushOverlay()
+        self.brush.setVisible(False)
+        self._scene.addItem(self.brush)
         self.setScene(self._scene)
 
         self.setBackgroundBrush(QColor(30, 30, 30))
@@ -178,6 +182,7 @@ class ImageViewer(QGraphicsView):
         """Muestra una imagen sRGB uint8. Conserva el zoom salvo reset_view."""
         self._item.setPixmap(QPixmap.fromImage(array_to_qimage(rgb_u8)))
         self.compare_divider.set_bounds(self._item.boundingRect())
+        self.brush.set_bounds(self._item.boundingRect())
         # Margen alrededor para poder agarrar los tiradores del recorte en el borde.
         self._scene.setSceneRect(self._item.boundingRect().adjusted(-40, -40, 40, 40))
         if reset_view or self._fit_mode:

@@ -122,6 +122,9 @@ EXTRA_DEFAULTS: dict = {
     "curves": {ch: IDENTITY_CURVE for ch in CURVE_CHANNELS},
     "lut_path": None,  # ruta a un archivo .cube
     "crop": (0.0, 0.0, 1.0, 1.0),  # x, y, ancho, alto normalizados
+    # Trazos de «Borrar objetos»: [{"r": radio, "pts": [[x, y], …]}] en 0–1
+    # respecto a la foto original (ver app/ai/inpaint.py).
+    "erase_strokes": (),
 }
 
 
@@ -204,6 +207,14 @@ def _normalize_extra(key: str, value):
         return {ch: normalize_curve(value.get(ch, IDENTITY_CURVE)) for ch in CURVE_CHANNELS}
     if key == "lut_path":
         return str(value) if value else None
+    if key == "erase_strokes":
+        strokes = []
+        for stroke in value:
+            pts = tuple((min(1.0, max(0.0, float(x))), min(1.0, max(0.0, float(y))))
+                        for x, y in stroke["pts"])
+            if pts:
+                strokes.append({"r": min(0.5, max(0.0005, float(stroke["r"]))), "pts": pts})
+        return tuple(strokes)
     if key == "crop":
         x, y, w, h = (float(v) for v in value)
         x = min(0.99, max(0.0, x))

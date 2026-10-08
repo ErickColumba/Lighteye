@@ -6,6 +6,27 @@ import numpy as np
 from PySide6.QtCore import QThread, Signal
 
 
+class EraseWorker(QThread):
+    """Rellena con LaMa las zonas pintadas con «Borrar objetos» (con caché)."""
+
+    done = Signal(str, list)  # clave, parches
+    failed = Signal(str)
+
+    def __init__(self, photo: Path, linear: np.ndarray, strokes, key: str, parent=None):
+        super().__init__(parent)
+        self.photo, self.linear, self.strokes, self.key = photo, linear, list(strokes), key
+
+    def run(self) -> None:
+        from app.ai.inpaint import patches_for
+
+        try:
+            patches = patches_for(self.photo, self.linear, self.strokes)
+        except Exception as exc:  # noqa: BLE001
+            self.failed.emit(str(exc) or exc.__class__.__name__)
+        else:
+            self.done.emit(self.key, patches)
+
+
 class ParseWorker(QThread):
     """Análisis facial (máscaras de piel, ojos, labios, pelo) con caché."""
 

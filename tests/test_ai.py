@@ -170,3 +170,54 @@ def test_retouch_follows_transform():
     out = apply_retouch(img, [_fake_parse()], Settings({"eyes_brighten": 100}), half)
     assert out[132, 165].mean() > 0.25  # el ojo (265, 330) queda en (132, 165)
     assert np.allclose(out[60, 60], 0.2)
+
+
+# --- Borrar objetos -----------------------------------------------------------------
+
+def test_strokes_mask_and_settings():
+    from app.ai.inpaint import strokes_mask
+    from app.core.settings import Settings
+
+    strokes = [{"r": 0.05, "pts": [[0.25, 0.5], [0.75, 0.5]]}]
+    mask = strokes_mask(100, 200, strokes)
+    assert mask[50, 100] == 255 and mask[50, 50] == 255  # a lo largo del trazo
+    assert mask[5, 5] == 0
+    s = Settings({"erase_strokes": [{"r": 9, "pts": [[2, -1]]}]})
+    assert s["erase_strokes"] == ({"r": 0.5, "pts": ((1.0, 0.0),)},)  # normalizado
+    assert Settings({"erase_strokes": "basura"}) == Settings()
+
+
+def test_erase_strokes_are_photo_specific():
+    from app.core.presets import apply_look, look_values
+    from app.core.settings import Settings
+
+    s = Settings({"exposure": 1, "erase_strokes": [{"r": 0.01, "pts": [[0.5, 0.5]]}]})
+    assert "erase_strokes" not in look_values(s)
+    other = Settings({"erase_strokes": [{"r": 0.02, "pts": [[0.1, 0.1]]}]})
+    assert apply_look(other, look_values(s))["erase_strokes"] == other["erase_strokes"]
+
+
+def test_paste_patches_follows_transform():
+    from app.ai.inpaint import Patch, paste_patches
+
+    patch = Patch(np.ones((20, 30, 3), np.float32), np.ones((20, 30), np.float32), 100, 40)
+    img = np.zeros((200, 300, 3), np.float32)
+    out = paste_patches(img, [patch])
+    assert out[50, 115, 0] > 0.9 and out[10, 10, 0] == 0
+    half = paste_patches(np.zeros((100, 150, 3), np.float32), [patch], np.diag([0.5, 0.5, 1.0]))
+    assert half[25, 57, 0] > 0.9 and half[70, 120, 0] == 0
+
+
+@needs("lama")
+def test_erase_fills_a_hole_with_surroundings():
+    from app.ai.inpaint import erase
+
+    y, x = np.mgrid[0:256, 0:256].astype(np.float32)
+    img = np.stack([x / 255, y / 255, np.full_like(x, 0.3)], axis=2)  # degradado suave
+    img[110:146, 110:146] = (1.0, 0.0, 1.0)  # "objeto" magenta
+    patches = erase(img, [{"r": 0.1, "pts": [[0.5, 0.5]]}], device="cpu")
+    assert len(patches) == 1
+    p = patches[0]
+    filled = p.image[128 - p.y0, 128 - p.x0]
+    assert abs(filled[0] - 0.5) < 0.15 and abs(filled[1] - 0.5) < 0.15  # sigue el degradado
+    assert filled[2] < 0.6  # el magenta ha desaparecido

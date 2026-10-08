@@ -183,7 +183,12 @@ def export_image(src: Path, image: np.ndarray, settings: Settings, out_path: Pat
         from app.ai.faces import parses_for
 
         parses = parses_for(Path(src), image)
-    linear = render_full(image, settings, step, faces, parses)
+    patches = None
+    if settings["erase_strokes"]:
+        from app.ai.inpaint import patches_for
+
+        patches = patches_for(Path(src), image, list(settings["erase_strokes"]))
+    linear = render_full(image, settings, step, faces, parses, patches)
     if upscaling:
         linear = ai_upscale(linear, options.ai_scale,
                             lambda f: progress(share + 0.5 * f) if progress else None)

@@ -122,14 +122,18 @@ def process(img: np.ndarray, settings: Settings, progress=None,
 
 
 def render_full(img: np.ndarray, settings: Settings, progress=None, faces=None,
-                parses=None) -> np.ndarray:
-    """Geometría + rostros restaurados y retoque (si hay) + ajustes, a
-    resolución completa."""
+                parses=None, patches=None) -> np.ndarray:
+    """Geometría + objetos borrados, rostros restaurados y retoque (si hay) +
+    ajustes, a resolución completa."""
     out = apply_geometry(img, settings)
-    if faces or parses:
+    if faces or parses or patches:
         from app.core.geometry import geometry_matrix
 
         m = geometry_matrix(img.shape[1], img.shape[0], settings)
+        if patches:
+            from app.ai.inpaint import paste_patches
+
+            out = paste_patches(out, patches, m)
         if faces and settings["face_restore"] > 0:
             from app.ai.faces import paste_faces
 

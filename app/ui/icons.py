@@ -40,6 +40,8 @@ _SHAPES = {
     "compare": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 2v20"/>'
                '<path d="M8 10l-2 2 2 2M16 10l2 2-2 2"/>',
     "menu": '<path d="M4 6h16M4 12h16M4 18h16"/>',
+    "eraser": '<path d="M20 20H8l-4-4a2 2 0 0 1 0-2.8l9.2-9.2a2 2 0 0 1 2.8 0l4 4a2 2 0 0 1 0 2.8L12 20"/>'
+              '<path d="M9 9.5l6 6"/>',
     "edited": '<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/>'
               '<circle cx="8" cy="17" r="2"/>',
 }

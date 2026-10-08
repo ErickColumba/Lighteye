@@ -76,8 +76,11 @@ class MainWindow(QMainWindow):
         self._geo_preview = None  # vista previa con la geometría, sin rostros
         self._faces: dict[str, list] = {}  # rostros restaurados por clave de caché
         self._parses: dict = {}  # análisis facial (máscaras) por foto
+        self._patches: dict[str, list] = {}  # zonas borradas (LaMa) por clave
         self._face_worker = None
         self._parse_worker = None
+        self._erase_worker = None
+        self.erase_mode = False
         self.crop_mode = False
         self._crop_backup: Settings | None = None
         self._export_worker: ExportWorker | None = None
@@ -172,6 +175,15 @@ class MainWindow(QMainWindow):
         self.crop_tools.apply_requested.connect(self.apply_crop)
         self.viewer.crop_overlay.rect_changed.connect(self._crop_rect_changed)
 
+        from app.ui.brush import EraseToolbar
+
+        self.erase_tools = EraseToolbar(self)
+        self.erase_tools.setVisible(False)
+        self.erase_tools.size_changed.connect(self._brush_size_changed)
+        self.erase_tools.clear_requested.connect(self._clear_erase)
+        self.erase_tools.done_requested.connect(self.leave_erase)
+        self.viewer.brush.stroke_finished.connect(self._erase_stroke)
+
         self.renderer = PreviewRenderer(self)
         self.renderer.rendered.connect(self._on_rendered)
         self.renderer.failed.connect(lambda msg: self.statusBar().showMessage(f"Error: {msg}"))
@@ -198,6 +210,8 @@ class MainWindow(QMainWindow):
         self.reset_action = A("reset", "Restablecer todos los ajustes", "Ctrl+R", self.reset_all)
         self.crop_action = A("crop", "Recortar y enderezar", "C", self.toggle_crop)
         self.crop_action.setCheckable(True)
+        self.erase_action = A("eraser", "Borrar objetos (IA)", "B", self.toggle_erase)
+        self.erase_action.setCheckable(True)
         self.fit_action = A("fit", "Ajustar a la ventana", "Ctrl+0", self.viewer.fit)
         self.zoom_action = A("zoom100", "Tamaño real (100 %)", "Ctrl+1", self.viewer.zoom_100)
         self.before_action = A(None, "Alternar antes / después", "\\", self.toggle_before)
@@ -213,8 +227,12 @@ class MainWindow(QMainWindow):
         self.crop_apply_action = A(None, "Aplicar recorte", "Return", self.apply_crop)
         self.crop_apply_action.setShortcuts([QKeySequence("Return"), QKeySequence("Enter")])
         self.crop_cancel_action = A(None, "Cancelar recorte", "Esc", self.cancel_crop)
+        self.erase_done_action = A(None, "Terminar de borrar", "Return", self.leave_erase)
+        self.erase_done_action.setShortcuts([QKeySequence("Return"), QKeySequence("Enter"),
+                                             QKeySequence("Esc")])
         for a in (self.crop_apply_action, self.crop_cancel_action, self.export_action,
-                  self.copy_action, self.paste_action, self.reset_action, self.crop_action):
+                  self.copy_action, self.paste_action, self.reset_action, self.crop_action,
+                  self.erase_action, self.erase_done_action):
             a.setEnabled(False)
 
         bar = QToolBar("Principal", self)
@@ -228,7 +246,7 @@ class MainWindow(QMainWindow):
             [self.export_action, self.export_many_action],
             [self.undo_action, self.redo_action],
             [self.copy_action, self.paste_action, self.reset_action],
-            [self.crop_action],
+            [self.crop_action, self.erase_action],
         ]
         for i, group in enumerate(groups):
             if i:
@@ -267,6 +285,8 @@ class MainWindow(QMainWindow):
         self.addToolBarBreak(Qt.ToolBarArea.TopToolBarArea)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.crop_tools)
         self.crop_tools.setVisible(False)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.erase_tools)
+        self.erase_tools.setVisible(False)
         self._update_history_actions()
 
     def _make_action(self, icon_name, text, shortcut, slot) -> QAction:
@@ -324,6 +344,8 @@ class MainWindow(QMainWindow):
 
         if self.crop_mode:
             self.cancel_crop()
+        if self.erase_mode:
+            self.leave_erase()
         self._commit_history()  # guarda la edición de la foto anterior
         self.renderer.cancel()
         if self.filmstrip.folder != loaded.path.parent:
@@ -334,6 +356,7 @@ class MainWindow(QMainWindow):
         self.preview = self._geo_preview = self.base_preview
         self._faces.clear()
         self._parses.clear()
+        self._patches.clear()
         self._source_sig = geometry_signature(Settings())
         # Si la foto ya se había editado, se recuperan sus ajustes.
         self.settings = load_sidecar(loaded.path) or Settings()
@@ -348,6 +371,12 @@ class MainWindow(QMainWindow):
         self.paste_action.setEnabled(self.copied_look is not None)
         self.reset_action.setEnabled(True)
         self.crop_action.setEnabled(True)
+        from app.ai import runtime
+
+        lama = runtime.model_available("lama")
+        self.erase_action.setEnabled(lama)
+        if not lama:
+            self.erase_action.setToolTip("Borrar objetos: no disponible (faltan PyTorch o el modelo LaMa)")
         self.view_bar.setEnabled(True)
         rgb = to_display_u8(self.base_preview)
         self._before_rgb, self._before_for = rgb, self.base_preview
@@ -492,12 +521,38 @@ class MainWindow(QMainWindow):
             parses = self._parses.get(self.loaded.path)
             if parses is None:
                 self._request_parses()
+        strokes = self.settings["erase_strokes"]
+        patches, erase_key = None, None
+        if strokes and self.loaded is not None:
+            from app.ai.inpaint import cache_key as erase_cache_key
+
+            erase_key = erase_cache_key(self.loaded.path, list(strokes))
+            patches = self._patches.get(erase_key)
+            if patches is None:
+                self._request_erase(erase_key)
         strength = self.settings["face_restore"] / 100
-        if not faces and not parses:
+        if not faces and not parses and not patches:
             return None
 
         from app.ai.faces import paste_faces
+        from app.ai.inpaint import paste_patches
         from app.ai.retouch import apply_retouch
+
+        transform = self._preview_transform()
+        snapshot = self.settings.copy()
+
+        def prepare(image, faces=faces, parses=parses, patches=patches):
+            out = paste_patches(image, patches, transform) if patches else image
+            out = paste_faces(out, faces, strength, transform) if faces else out
+            return apply_retouch(out, parses, snapshot, transform) if parses else out
+
+        key = (id(self.preview), face_key if faces else None, strength if faces else 0,
+               tuple(sorted(retouch.items())) if parses else None, self.crop_mode,
+               erase_key if patches else None)
+        return key, prepare
+
+    def _preview_transform(self) -> np.ndarray:
+        """Matriz 3×3: foto original → imagen que se muestra (vista previa)."""
         from app.core.geometry import geometry_matrix
 
         h, w = self.loaded.image.shape[:2]
@@ -508,16 +563,96 @@ class MainWindow(QMainWindow):
             shown["crop"] = FULL_CROP
         fw, fh = final_size(w, h, shown)
         ph, pw = self.preview.shape[:2]
-        transform = np.diag([pw / fw, ph / fh, 1.0]) @ geo
-        snapshot = self.settings.copy()
+        return np.diag([pw / fw, ph / fh, 1.0]) @ geo
 
-        def prepare(image, faces=faces, parses=parses):
-            out = paste_faces(image, faces, strength, transform) if faces else image
-            return apply_retouch(out, parses, snapshot, transform) if parses else out
+    # --- Borrar objetos (LaMa) ------------------------------------------------------
 
-        key = (id(self.preview), face_key if faces else None, strength if faces else 0,
-               tuple(sorted(retouch.items())) if parses else None, self.crop_mode)
-        return key, prepare
+    def toggle_erase(self) -> None:
+        if self.erase_mode:
+            self.leave_erase()
+        else:
+            self.enter_erase()
+
+    def enter_erase(self) -> None:
+        if self.preview is None or self.erase_mode:
+            self.erase_action.setChecked(self.erase_mode)
+            return
+        if self.crop_mode:
+            self.apply_crop()
+        self._commit_history()
+        self.set_view_mode("after")
+        self.erase_mode = True
+        self.erase_action.setChecked(True)
+        self.erase_done_action.setEnabled(True)
+        self.erase_tools.setVisible(True)
+        self.viewer.brush.setVisible(True)
+        self.viewer.setDragMode(self.viewer.DragMode.NoDrag)
+        self.statusBar().showMessage("Pinta sobre lo que quieras borrar; al soltar se rellena con IA")
+
+    def leave_erase(self) -> None:
+        if not self.erase_mode:
+            return
+        self.erase_mode = False
+        self.erase_action.setChecked(False)
+        self.erase_done_action.setEnabled(False)
+        self.erase_tools.setVisible(False)
+        self.viewer.brush.setVisible(False)
+        self.viewer.setDragMode(self.viewer.DragMode.ScrollHandDrag)
+
+    def _brush_size_changed(self, px: int) -> None:
+        self.viewer.brush.radius_px = px
+        self.viewer.brush.update()
+
+    def _erase_stroke(self, points: list, radius: float) -> None:
+        """Trazo terminado (en coordenadas de la vista previa) → ajustes."""
+        if self.loaded is None:
+            return
+        inv = np.linalg.inv(self._preview_transform())
+        h, w = self.loaded.image.shape[:2]
+        orig = [inv @ np.array([x, y, 1.0]) for x, y in points]
+        scale = np.sqrt(abs(np.linalg.det(inv[:2, :2])))
+        stroke = {"r": radius * scale / max(w, h), "pts": [(p[0] / w, p[1] / h) for p in orig]}
+        self.settings["erase_strokes"] = tuple(self.settings["erase_strokes"]) + (stroke,)
+        self._commit_history()
+        self._request_render()
+
+    def _clear_erase(self) -> None:
+        if self.settings["erase_strokes"]:
+            self.settings["erase_strokes"] = ()
+            self._commit_history()
+            self._request_render()
+
+    def _request_erase(self, key: str) -> None:
+        from app.ai.inpaint import _cache_dir
+
+        if self._erase_worker is not None:
+            return  # al terminar el actual se vuelve a comprobar
+        from app.ai import runtime
+        from app.ui.ai_worker import EraseWorker
+
+        if not runtime.model_available("lama"):
+            return
+        worker = EraseWorker(self.loaded.path, self.loaded.image, self.settings["erase_strokes"], key, self)
+        worker.done.connect(self._erase_ready)
+        worker.failed.connect(lambda msg: (self.statusBar().showMessage(f"Error al borrar: {msg}", 8000),
+                                           self._clear_erase_worker()))
+        self._erase_worker = worker
+        cached = (_cache_dir() / f"{key}.npz").is_file()
+        if not cached:
+            self.statusBar().showMessage(f"Borrando con IA… ({runtime.device_name()})")
+        worker.start()
+
+    def _clear_erase_worker(self) -> None:
+        if self._erase_worker is not None:
+            self._erase_worker.deleteLater()
+        self._erase_worker = None
+
+    def _erase_ready(self, key: str, patches: list) -> None:
+        self._patches[key] = patches
+        self._clear_erase_worker()
+        if self.erase_mode:
+            self.statusBar().showMessage("Listo. Sigue pintando para borrar más (Ctrl+Z deshace)", 5000)
+        self._request_render()
 
     def _request_faces(self, key: str) -> None:
         from app.ai.faces import load_cached
@@ -601,6 +736,8 @@ class MainWindow(QMainWindow):
             self.enter_crop()
 
     def enter_crop(self) -> None:
+        if self.erase_mode:
+            self.leave_erase()
         if self.preview is None or self.crop_mode:
             self.crop_action.setChecked(self.crop_mode)
             return
@@ -961,7 +1098,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._commit_history()
-        for w in (self._face_worker, self._parse_worker):
+        for w in (self._face_worker, self._parse_worker, self._erase_worker):
             if w is not None:
                 w.wait()
         worker = self._export_worker
