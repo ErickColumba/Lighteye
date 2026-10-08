@@ -38,6 +38,7 @@ from app.core.loader import (
 )
 from app.core.presets import apply_look, delete_preset, list_presets, look_values, save_preset
 from app.core.settings import Settings, load_sidecar, save_sidecar, sidecar_path
+from app.ui.browser import FilmStrip
 from app.ui.crop_tools import CropToolbar
 from app.ui.export_dialog import ExportDialog, ExportWorker, ask_output_path
 from app.ui.histogram import HistogramWidget
@@ -104,6 +105,19 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, presets_dock)
         self.presets_dock = presets_dock
 
+        self.filmstrip = FilmStrip()
+        self.filmstrip.open_requested.connect(self._open_from_strip)
+        self.filmstrip.batch_requested.connect(self._batch_action)
+        self.filmstrip.presets_menu_provider = lambda: [(p.name, p) for p in list_presets()]
+        self.filmstrip.can_paste = lambda: self.copied_look is not None
+        strip_dock = QDockWidget("Carpeta", self)
+        strip_dock.setObjectName("carpeta")
+        strip_dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable
+                               | QDockWidget.DockWidgetFeature.DockWidgetClosable)
+        strip_dock.setWidget(self.filmstrip)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, strip_dock)
+        self.strip_dock = strip_dock
+
         self.crop_tools = CropToolbar(self)
         self.crop_tools.setVisible(False)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.crop_tools)
@@ -128,6 +142,11 @@ class MainWindow(QMainWindow):
     def _build_menus(self) -> None:
         file_menu = self.menuBar().addMenu("&Archivo")
         self._add_action(file_menu, "&Abrir…", QKeySequence.StandardKey.Open, self.choose_image)
+        self._add_action(file_menu, "Abrir &carpeta…", "Ctrl+Shift+O", self.choose_folder)
+        file_menu.addSeparator()
+        self._add_action(file_menu, "Foto a&nterior", "Ctrl+Left", lambda: self._step_photo(-1))
+        self._add_action(file_menu, "Foto si&guiente", "Ctrl+Right", lambda: self._step_photo(1))
+        file_menu.addSeparator()
         self.export_action = self._add_action(file_menu, "&Exportar…", "Ctrl+E", self.export)
         self.export_action.setEnabled(False)
         file_menu.addSeparator()
@@ -160,6 +179,7 @@ class MainWindow(QMainWindow):
         self.before_action.setCheckable(True)
         view_menu.addSeparator()
         view_menu.addAction(self.presets_dock.toggleViewAction())
+        view_menu.addAction(self.strip_dock.toggleViewAction())
         view_menu.addSeparator()
         self._add_action(view_menu, "&Ajustar a la ventana", "Ctrl+0", self.viewer.fit)
         self._add_action(view_menu, "Tamaño &real (100 %)", "Ctrl+1", self.viewer.zoom_100)
@@ -181,6 +201,28 @@ class MainWindow(QMainWindow):
         if path:
             self.open_image(path)
 
+    def choose_folder(self) -> None:
+        start = str(self.loaded.path.parent) if self.loaded else ""
+        folder = QFileDialog.getExistingDirectory(self, "Abrir carpeta", start)
+        if not folder:
+            return
+        self.filmstrip.set_folder(Path(folder))
+        paths = self.filmstrip.paths()
+        if paths:
+            self.open_image(paths[0])
+        else:
+            self.statusBar().showMessage("La carpeta no tiene fotos compatibles", 4000)
+
+    def _open_from_strip(self, path: str) -> None:
+        if self.loaded is None or Path(path) != self.loaded.path:
+            self.open_image(path)
+
+    def _step_photo(self, step: int) -> None:
+        if self.loaded is not None:
+            target = self.filmstrip.neighbour(str(self.loaded.path), step)
+            if target:
+                self.open_image(target)
+
     def open_image(self, path: str) -> None:
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
@@ -195,6 +237,9 @@ class MainWindow(QMainWindow):
             self.cancel_crop()
         self._commit_history()  # guarda la edición de la foto anterior
         self.renderer.cancel()
+        if self.filmstrip.folder != loaded.path.parent:
+            self.filmstrip.set_folder(loaded.path.parent)
+        self.filmstrip.mark_current(str(loaded.path))
         self.loaded = loaded
         self.base_preview = make_preview(loaded.image)
         self.preview = self.base_preview
@@ -264,6 +309,8 @@ class MainWindow(QMainWindow):
             save_sidecar(self.loaded.path, self.settings)
         except OSError as exc:
             self.statusBar().showMessage(f"No se pudieron guardar los ajustes: {exc}", 5000)
+            return
+        self.filmstrip.refresh([str(self.loaded.path)])
 
     def _update_history_actions(self) -> None:
         self.undo_action.setEnabled(self.history.can_undo() or self._history_timer.isActive())
@@ -462,6 +509,49 @@ class MainWindow(QMainWindow):
         self._commit_history()
         self.statusBar().showMessage("Ajustes pegados", 3000)
 
+    # --- Acciones sobre varias fotos ---------------------------------------------
+
+    def _batch_action(self, action: str, items: list) -> None:
+        if action == "export":
+            self.export_batch(items)
+            return
+        if action == "paste":
+            look = dict(self.copied_look or {})
+            change, label = (lambda s: apply_look(s, look)), "Ajustes pegados"
+        elif action == "preset":
+            preset, items = items[0], items[1:]
+            change, label = (lambda s: apply_look(s, preset.values)), f"Preset «{preset.name}» aplicado"
+        elif action == "reset":
+            change, label = (lambda s: Settings()), "Ajustes restablecidos"
+        else:
+            return
+        self._edit_many(items, change)
+        self.statusBar().showMessage(f"{label} a {len(items)} foto(s)", 5000)
+
+    def _edit_many(self, paths: list[str], change) -> None:
+        """Cambia los ajustes de varias fotos escribiendo sus sidecars. La foto
+        abierta se cambia en vivo (y se puede deshacer)."""
+        if self.crop_mode:
+            self.apply_crop()
+        self._commit_history()
+        failed = []
+        for p in paths:
+            if self.loaded is not None and Path(p) == self.loaded.path:
+                self._apply_settings(change(self.settings))
+                self._commit_history()
+                continue
+            try:
+                save_sidecar(p, change(load_sidecar(p) or Settings()))
+            except OSError:
+                failed.append(Path(p).name)
+        self.filmstrip.refresh(paths)
+        if failed:
+            QMessageBox.warning(self, "Lighteye", "No se pudieron guardar los ajustes de:\n"
+                                + "\n".join(failed))
+
+    def export_batch(self, paths: list[str]) -> None:
+        pass
+
     # --- Presets ----------------------------------------------------------------
 
     def _update_preset_thumbs(self) -> None:
@@ -556,6 +646,7 @@ class MainWindow(QMainWindow):
             worker.cancel()
             worker.wait()
         self.renderer.shutdown()
+        self.filmstrip.shutdown()
         super().closeEvent(event)
 
     # --- Arrastrar y soltar ------------------------------------------------

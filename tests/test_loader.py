@@ -76,3 +76,11 @@ def test_grayscale_and_alpha_png(tmp_path):
     rgba = np.zeros((5, 6, 4), np.uint8)
     cv2.imencode(".png", rgba)[1].tofile(tmp_path / "a.png")
     assert load_image(tmp_path / "a.png").image.shape == (5, 6, 3)
+
+
+def test_int_srgb_to_linear_matches_exact_formula():
+    from app.core.color import int_srgb_to_linear
+    u8 = np.arange(256, dtype=np.uint8)
+    assert np.allclose(int_srgb_to_linear(u8), srgb_to_linear(u8 / 255.0), atol=1e-7)
+    u16 = np.array([0, 1, 1000, 32768, 65535], np.uint16)
+    assert np.allclose(int_srgb_to_linear(u16), srgb_to_linear(u16 / 65535.0), atol=1e-7)

@@ -6,7 +6,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.core.color import srgb_to_linear
+from app.core.color import int_srgb_to_linear, srgb_to_linear
 
 RAW_EXTENSIONS = {
     ".cr2", ".cr3", ".nef", ".nrw", ".arw", ".srf", ".sr2", ".dng", ".raf",
@@ -51,14 +51,11 @@ def _load_raster(path: Path) -> LoadedImage:
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
     bits = 16 if img.dtype == np.uint16 else 8
-    if img.dtype == np.uint8:
-        img = img.astype(np.float32) / 255.0
-    elif img.dtype == np.uint16:
-        img = img.astype(np.float32) / 65535.0
-    else:
-        img = np.clip(img.astype(np.float32), 0.0, 1.0)
-
-    return LoadedImage(path, srgb_to_linear(img), False, {"bits": bits})
+    if img.dtype in (np.uint8, np.uint16):
+        linear = int_srgb_to_linear(img)
+    else:  # TIFF en coma flotante
+        linear = srgb_to_linear(np.clip(img.astype(np.float32), 0.0, 1.0))
+    return LoadedImage(path, linear, False, {"bits": bits})
 
 
 def _load_raw(path: Path) -> LoadedImage:

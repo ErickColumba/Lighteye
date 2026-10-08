@@ -52,6 +52,21 @@ _TO_SRGB_LUT = linear_to_srgb(lut_domain())
 _TO_LINEAR_LUT = srgb_to_linear(lut_domain())
 
 
+# Tablas exactas para imágenes enteras: indexar es ~50 veces más rápido que
+# evaluar la potencia de la curva sRGB en cada píxel.
+_U8_TO_LINEAR = srgb_to_linear(np.arange(256, dtype=np.float32) / 255.0)
+_U16_TO_LINEAR = srgb_to_linear(np.arange(65536, dtype=np.float32) / 65535.0)
+
+
+def int_srgb_to_linear(img: np.ndarray) -> np.ndarray:
+    """sRGB uint8/uint16 -> lineal float32 (exacto, con tabla)."""
+    if img.dtype == np.uint8:
+        return _U8_TO_LINEAR[img]
+    if img.dtype == np.uint16:
+        return _U16_TO_LINEAR[img]
+    raise TypeError(f"Tipo no soportado: {img.dtype}")
+
+
 def to_srgb_fast(img: np.ndarray) -> np.ndarray:
     """linear_to_srgb con LUT (recorta a 0–1)."""
     return _TO_SRGB_LUT[lut_index(img)]
