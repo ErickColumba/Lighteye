@@ -48,6 +48,18 @@ def lut_domain() -> np.ndarray:
 
 
 _DISPLAY_LUT = (linear_to_srgb(lut_domain()) * 255.0 + 0.5).astype(np.uint8)
+_TO_SRGB_LUT = linear_to_srgb(lut_domain())
+_TO_LINEAR_LUT = srgb_to_linear(lut_domain())
+
+
+def to_srgb_fast(img: np.ndarray) -> np.ndarray:
+    """linear_to_srgb con LUT (recorta a 0–1)."""
+    return _TO_SRGB_LUT[lut_index(img)]
+
+
+def to_linear_fast(img: np.ndarray) -> np.ndarray:
+    """srgb_to_linear con LUT (recorta a 0–1)."""
+    return _TO_LINEAR_LUT[lut_index(img)]
 
 
 def to_display_u8(img: np.ndarray) -> np.ndarray:

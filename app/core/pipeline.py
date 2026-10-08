@@ -14,6 +14,7 @@ from app.core.settings import Settings
 STEPS = [
     (("temperature", "tint"), adj.white_balance),
     (("exposure",), adj.exposure),
+    (("highlights", "shadows", "whites", "blacks"), adj.tones),
     (("contrast",), adj.contrast),
     (("saturation",), adj.saturation),
 ]

@@ -4,11 +4,13 @@ import math
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QGridLayout,
     QLabel,
     QScrollArea,
     QSizePolicy,
     QSlider,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -74,7 +76,8 @@ class ParamRow:
         self._on_change(self.param.key, value)
 
     def _show(self, value: float) -> None:
-        text = f"{value:+.{self._decimals}f}" if value else f"{0:.{self._decimals}f}"
+        signed = self.param.minimum < 0 and value != 0
+        text = f"{value:+.{self._decimals}f}" if signed else f"{value:.{self._decimals}f}"
         self.value_label.setText(text)
         bold = value != self.param.default
         font = self.label.font()
@@ -90,6 +93,22 @@ class ParamRow:
             self._on_change(self.param.key, value)
 
 
+class ToggleRow:
+    """Casilla para un Param de tipo "toggle" (valor 0 o 1)."""
+
+    def __init__(self, param: Param, grid: QGridLayout, row: int, on_change):
+        self.param = param
+        self.checkbox = QCheckBox(param.label)
+        grid.addWidget(self.checkbox, row, 0, 1, 3)
+        self.checkbox.toggled.connect(lambda on: on_change(param.key, 1.0 if on else 0.0))
+        self.set_value(param.default)
+
+    def set_value(self, value: float, emit: bool = False) -> None:
+        self.checkbox.blockSignals(not emit)
+        self.checkbox.setChecked(bool(value))
+        self.checkbox.blockSignals(False)
+
+
 class CollapsibleSection(QWidget):
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
@@ -103,9 +122,10 @@ class CollapsibleSection(QWidget):
         self.toggle.setFont(font)
 
         self.body = QWidget()
-        self.grid = QGridLayout(self.body)
-        self.grid.setContentsMargins(8, 0, 4, 8)
-        self.grid.setColumnStretch(1, 1)
+        self.body_layout = QVBoxLayout(self.body)
+        self.body_layout.setContentsMargins(8, 0, 4, 8)
+        self.grid = new_grid()
+        self.body_layout.addLayout(self.grid)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -120,8 +140,15 @@ class CollapsibleSection(QWidget):
         self.body.setVisible(is_open)
 
 
+def new_grid() -> QGridLayout:
+    grid = QGridLayout()
+    grid.setContentsMargins(0, 0, 0, 0)
+    grid.setColumnStretch(1, 1)
+    return grid
+
+
 class AdjustmentPanel(QScrollArea):
-    changed = Signal(str, float)  # clave, valor
+    changed = Signal(str, object)  # clave, valor
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -133,18 +160,39 @@ class AdjustmentPanel(QScrollArea):
         layout = QVBoxLayout(content)
         layout.setContentsMargins(4, 4, 4, 4)
 
-        self.rows: dict[str, ParamRow] = {}
+        self.rows: dict[str, ParamRow | ToggleRow] = {}
+        self.sections: dict[str, CollapsibleSection] = {}
         for group in GROUPS:
             params = [p for p in PARAMS if p.group == group]
-            if not params:
-                continue
             section = CollapsibleSection(group)
-            for i, p in enumerate(params):
-                self.rows[p.key] = ParamRow(p, section.grid, i, self.changed.emit)
+            self._fill_section(section, params)
+            section.setVisible(bool(params))  # se muestra al añadirle contenido
+            self.sections[group] = section
             layout.addWidget(section)
 
         layout.addStretch(1)
         self.setWidget(content)
+
+    def _fill_section(self, section: CollapsibleSection, params: list[Param]) -> None:
+        tabs: dict[str, QGridLayout] = {}
+        tab_widget = None
+        for p in params:
+            if p.tab:
+                if tab_widget is None:
+                    tab_widget = QTabWidget()
+                    tab_widget.setDocumentMode(True)
+                    section.body_layout.addWidget(tab_widget)
+                if p.tab not in tabs:
+                    page = QWidget()
+                    tabs[p.tab] = new_grid()
+                    tabs[p.tab].setContentsMargins(0, 6, 0, 0)
+                    page.setLayout(tabs[p.tab])
+                    tab_widget.addTab(page, p.tab)
+                grid = tabs[p.tab]
+            else:
+                grid = section.grid
+            row_cls = ToggleRow if p.kind == "toggle" else ParamRow
+            self.rows[p.key] = row_cls(p, grid, grid.rowCount(), self.changed.emit)
 
     def set_settings(self, settings: Settings) -> None:
         """Refleja unos ajustes en los sliders sin emitir `changed`."""

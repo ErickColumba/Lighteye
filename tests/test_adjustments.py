@@ -108,3 +108,47 @@ def test_corrupt_sidecar_is_ignored(tmp_path):
     photo = tmp_path / "foto.jpg"
     sidecar_path(photo).write_text("{no es json")
     assert load_sidecar(photo) is None
+
+
+# --- Altas luces / sombras / blancos / negros -------------------------------
+
+TONE_CASES = [(h, s, w, b) for h in (-100, 0, 100) for s in (-100, 0, 100)
+              for w in (-100, 0, 100) for b in (-100, 0, 100)]
+
+
+def test_tones_zero_is_identity(img):
+    assert np.allclose(adj.tones(img, 0, 0, 0, 0), img, rtol=1e-3, atol=1e-5)
+
+
+@pytest.mark.parametrize("h,s,w,b", TONE_CASES)
+def test_tone_curve_is_monotonic(h, s, w, b):
+    p = np.linspace(0, adj.TONE_HEADROOM ** (1 / adj.PERCEPTUAL_GAMMA), 5000)
+    q = adj._tone_curve(p, h / 100, s / 100, w / 100, b / 100)
+    assert np.all(np.diff(q) >= -1e-9)
+
+
+def _grey(v):
+    return np.full((1, 1, 3), v, np.float32)
+
+
+def test_shadows_lift_dark_tones_and_leave_white():
+    assert adj.tones(_grey(0.02), 0, 80, 0, 0)[0, 0, 0] > 0.02
+    assert adj.tones(_grey(0.02), 0, -80, 0, 0)[0, 0, 0] < 0.02
+    assert adj.tones(_grey(1.0), 0, 80, 0, 0)[0, 0, 0] == pytest.approx(1.0, abs=1e-3)
+
+
+def test_highlight_recovery_brings_clipped_values_back():
+    hot = _grey(1.8)  # casi un paso por encima del blanco
+    assert adj.tones(hot, -100, 0, 0, 0)[0, 0, 0] < 1.0
+    assert adj.tones(_grey(0.6), 60, 0, 0, 0)[0, 0, 0] > 0.6
+
+
+def test_whites_and_blacks_move_end_points():
+    assert adj.tones(_grey(0.9), 0, 0, 50, 0)[0, 0, 0] > 0.9
+    assert adj.tones(_grey(0.005), 0, 0, 0, -50)[0, 0, 0] < 0.005
+
+
+def test_tones_preserve_colour_ratios():
+    px = np.array([[[0.2, 0.1, 0.05]]], np.float32)
+    out = adj.tones(px, 0, 70, 0, 0)[0, 0]
+    assert out[0] / out[1] == pytest.approx(2.0, rel=1e-4)

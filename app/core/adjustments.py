@@ -10,7 +10,7 @@ from functools import lru_cache
 import cv2
 import numpy as np
 
-from app.core.color import LUMA, lut_domain, lut_index
+from app.core.color import LUMA, LUT_SIZE, lut_domain, lut_index
 
 # Gris medio (18 %) en lineal: pivote para el contraste.
 MID_GREY = 0.18
@@ -35,6 +35,61 @@ def white_balance(img: np.ndarray, temperature: float, tint: float) -> np.ndarra
 def exposure(img: np.ndarray, ev: float) -> np.ndarray:
     """Exposición en pasos (EV): multiplicar en lineal por 2^ev."""
     return img * np.float32(2.0 ** ev)
+
+
+# Rango de luminancia lineal que cubren los ajustes tonales: hasta 2 pasos
+# por encima del blanco, para poder recuperar altas luces (sobre todo en RAW).
+TONE_HEADROOM = 4.0
+
+
+def _tone_curve(p: np.ndarray, h: float, s: float, w: float, b: float) -> np.ndarray:
+    """Curva tonal en espacio perceptual. h, s, w, b van de −1 a 1.
+
+    Cada término es una "joroba" que vale 0 en los extremos de su zona, así
+    que con todo en 0 la curva es la identidad. Los factores están elegidos
+    para que la curva sea siempre creciente (sin inversiones de tono).
+    """
+    inside = np.clip(p, 0.0, 1.0)
+    q = p.copy()
+    q += s * 0.6 * inside * (1.0 - inside) ** 3          # sombras: zona ~25 %
+    if h > 0:
+        q += h * 0.6 * inside ** 3 * (1.0 - inside)      # altas luces: zona ~75 %
+    q += np.where(p <= 1.0, w * 0.1 * p ** 4, w * (0.1 + 0.4 * (p - 1.0)))  # blancos
+    q += b * 0.1 * (1.0 - inside) ** 4                   # negros
+    if h < 0:
+        # Recuperación: comprime suavemente todo lo que está por encima de k
+        # (Reinhard extendido: el máximo del rango pasa a valer 1).
+        k = 0.5
+        p_max = TONE_HEADROOM ** (1 / PERCEPTUAL_GAMMA)
+        white = (p_max - k) / (1.0 - k)
+        x = np.maximum(q - k, 0.0) / (1.0 - k)
+        rolled = k + (1.0 - k) * x * (1.0 + x / white**2) / (1.0 + x)
+        q = np.where(q > k, q + (rolled - q) * -h, q)
+    return q
+
+
+@lru_cache(maxsize=8)
+def _tone_gain_lut(h: float, s: float, w: float, b: float) -> np.ndarray:
+    """Ganancia (salida / entrada) para cada luminancia lineal de 0 a TONE_HEADROOM."""
+    lum = np.linspace(0.0, TONE_HEADROOM, LUT_SIZE)
+    p = lum ** (1 / PERCEPTUAL_GAMMA)
+    out = np.maximum(_tone_curve(p, h, s, w, b), 0.0) ** PERCEPTUAL_GAMMA
+    gain = out / np.maximum(lum, lum[1])
+    gain[0] = gain[1]
+    return gain.astype(np.float32)
+
+
+def tones(img: np.ndarray, highlights: float, shadows: float, whites: float,
+          blacks: float) -> np.ndarray:
+    """Altas luces, sombras, blancos y negros (−100 … +100).
+
+    Se calcula sobre la luminancia y se aplica como ganancia a los tres
+    canales, así el tono y la saturación relativa de cada color se conservan.
+    """
+    gain = _tone_gain_lut(highlights / 100, shadows / 100, whites / 100, blacks / 100)
+    lum = cv2.transform(img, LUMA[None, :])
+    idx = np.clip(lum * ((LUT_SIZE - 1) / TONE_HEADROOM) + 0.5, 0, LUT_SIZE - 1)
+    return img * gain[idx.astype(np.uint16)][..., None]
 
 
 @lru_cache(maxsize=8)
