@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from app.core import curves as curve_math
+from app.core.lut import apply_cube, load_cube
 from app.core.color import (
     LUMA,
     LUT_SIZE,
@@ -427,3 +428,16 @@ def grain(img: np.ndarray, amount: float, size: float) -> np.ndarray:
     weight = np.clip(4.0 * y * (1.0 - y) + 0.2, 0.0, 1.0)
     noise = _grain_field(img.shape[0], img.shape[1], size)
     return img * np.exp2(noise * weight * (amount / 100.0 * 0.5))[..., None]
+
+
+def lut(img: np.ndarray, path: str | None, amount: float) -> np.ndarray:
+    """Aplica un LUT .cube en sRGB, mezclado con el original según amount (0–100)."""
+    if not path or amount == 0:
+        return img
+    srgb = to_srgb_fast(img)
+    graded = apply_cube(load_cube(path), srgb)
+    if amount < 100:
+        graded = srgb + (graded - srgb) * np.float32(amount / 100.0)
+    out = to_linear_fast(graded)
+    out += np.maximum(img - 1.0, 0.0)
+    return out

@@ -1,12 +1,17 @@
 """Panel de ajustes: un slider por parámetro, en secciones plegables."""
 
 import math
+from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QFileDialog,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
+    QMessageBox,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
     QSlider,
@@ -16,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.core.lut import load_cube
 from app.core.settings import GROUPS, PARAMS, Param, Settings
 from app.ui.curve_editor import CurveEditor
 
@@ -141,6 +147,49 @@ class CollapsibleSection(QWidget):
         self.body.setVisible(is_open)
 
 
+class LutPicker(QWidget):
+    """Nombre del LUT actual con botones para cargar otro o quitarlo."""
+
+    changed = Signal(object)  # ruta (str) o None
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.name = QLabel()
+        self.name.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        load = QPushButton("Cargar…")
+        self.remove = QPushButton("Quitar")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 4)
+        layout.addWidget(self.name, 1)
+        layout.addWidget(load)
+        layout.addWidget(self.remove)
+        load.clicked.connect(self._choose)
+        self.remove.clicked.connect(lambda: self._set(None))
+        self.set_path(None)
+
+    def set_path(self, path: str | None) -> None:
+        self.name.setText(Path(path).name if path else "Ninguno")
+        self.name.setToolTip(path or "")
+        self.remove.setEnabled(bool(path))
+
+    def _choose(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Cargar LUT", "", "LUT (*.cube *.CUBE);;Todos los archivos (*)"
+        )
+        if not path:
+            return
+        try:
+            load_cube(path)  # se valida aquí para avisar enseguida si está mal
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Lighteye", f"No se pudo cargar el LUT:\n{exc}")
+            return
+        self._set(path)
+
+    def _set(self, path: str | None) -> None:
+        self.set_path(path)
+        self.changed.emit(path)
+
+
 def new_grid() -> QGridLayout:
     grid = QGridLayout()
     grid.setContentsMargins(0, 0, 0, 0)
@@ -175,12 +224,16 @@ class AdjustmentPanel(QScrollArea):
         self.curve_editor.changed.connect(lambda c: self.changed.emit("curves", c))
         self._add_custom("Curvas", self.curve_editor)
 
+        self.lut_picker = LutPicker()
+        self.lut_picker.changed.connect(lambda path: self.changed.emit("lut_path", path))
+        self._add_custom("LUT", self.lut_picker, top=True)
+
         layout.addStretch(1)
         self.setWidget(content)
 
-    def _add_custom(self, group: str, widget: QWidget) -> None:
+    def _add_custom(self, group: str, widget: QWidget, top: bool = False) -> None:
         section = self.sections[group]
-        section.body_layout.addWidget(widget)
+        section.body_layout.insertWidget(0 if top else -1, widget)
         section.setVisible(True)
 
     def _fill_section(self, section: CollapsibleSection, params: list[Param]) -> None:
@@ -209,3 +262,4 @@ class AdjustmentPanel(QScrollArea):
         for key, row in self.rows.items():
             row.set_value(settings[key])
         self.curve_editor.set_curves(settings["curves"])
+        self.lut_picker.set_path(settings["lut_path"])

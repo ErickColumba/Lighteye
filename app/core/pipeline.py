@@ -21,6 +21,7 @@ STEPS = [
     (tuple(HSL_KEYS), adj.hsl),
     (("vibrance",), adj.vibrance),
     (("saturation",), adj.saturation),
+    (("lut_path", "lut_amount"), adj.lut),
     (("clarity",), adj.clarity),
     (("dehaze",), adj.dehaze),
     (("bw", "bw_red", "bw_green", "bw_blue"), adj.black_and_white),

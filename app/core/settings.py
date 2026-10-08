@@ -30,7 +30,7 @@ class Param:
 
 
 # Grupos en el orden en que aparecen en el panel.
-GROUPS = ["Luz", "Curvas", "Color", "HSL", "Detalle", "Efectos"]
+GROUPS = ["Luz", "Curvas", "Color", "HSL", "LUT", "Detalle", "Efectos"]
 
 PARAMS: list[Param] = [
     Param("exposure", "Exposición", "Luz", -4.0, 4.0, step=0.01),
@@ -46,6 +46,7 @@ PARAMS: list[Param] = [
 ]
 
 PARAMS += [
+    Param("lut_amount", "Intensidad", "LUT", 0, 100, 100),
     Param("sharpen", "Nitidez", "Detalle", 0, 100),
     Param("nr_luma", "Reducción de ruido", "Detalle", 0, 100),
     Param("nr_color", "Ruido de color", "Detalle", 0, 100),
@@ -92,6 +93,7 @@ CURVE_CHANNELS = ("rgb", "r", "g", "b")
 
 EXTRA_DEFAULTS: dict = {
     "curves": {ch: IDENTITY_CURVE for ch in CURVE_CHANNELS},
+    "lut_path": None,  # ruta a un archivo .cube
 }
 
 
