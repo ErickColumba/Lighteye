@@ -67,3 +67,13 @@ def test_builtin_presets(tmp_path, monkeypatch):
 def test_file_names_are_clean(tmp_path):
     p = save_preset("Retrato · Natural / v2", Settings({"exposure": 1}), tmp_path)
     assert p.path.name == "Retrato Natural v2.json"
+
+
+def test_none_preset_clears_look_but_keeps_crop():
+    from app.core.presets import NONE_PRESET
+
+    photo = Settings({"exposure": 1, "lut_path": "lighteye:calido.cube", "angle": 2,
+                      "crop": [0.1, 0.1, 0.5, 0.5]})
+    result = apply_look(photo, NONE_PRESET.values)
+    assert look_values(result) == {}
+    assert result["angle"] == 2 and result["crop"] == (0.1, 0.1, 0.5, 0.5)

@@ -39,6 +39,11 @@ class Preset:
     builtin: bool = False  # incluido con Lighteye (no se puede borrar)
 
 
+# Preset especial: quita todos los ajustes de color/luz (vuelve al original),
+# conservando el recorte y los giros. No es un archivo.
+NONE_PRESET = Preset("Ninguno (original)", Path(), {}, builtin=True)
+
+
 def look_values(settings: Settings) -> dict:
     """Ajustes que forman parte de un preset (todo menos la geometría)."""
     return {k: v for k, v in settings.non_default().items() if k not in GEOMETRY_KEYS}

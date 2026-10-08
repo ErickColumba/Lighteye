@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 
 from app.core.color import to_display_u8
 from app.core.pipeline import process
-from app.core.presets import Preset, apply_look, list_presets
+from app.core.presets import NONE_PRESET, Preset, apply_look, list_presets
 from app.core.settings import Settings
 from app.ui.viewer import array_to_qimage
 
@@ -72,15 +72,17 @@ class PresetPanel(QWidget):
         presets = list_presets()
         builtin = [p for p in presets if p.builtin]
         mine = [p for p in presets if not p.builtin]
+        builtin = [NONE_PRESET] + builtin
         for title, group in (("Incluidos", builtin), ("Mis presets", mine)):
-            if title == "Incluidos" and not group:
-                continue
             self._header(title)
             for preset in group:
                 item = QListWidgetItem(preset.name)
                 item.setData(Qt.ItemDataRole.UserRole, preset)
                 item.setSizeHint(QSize(0, THUMB_SIZE.height() + 8))
-                if preset.builtin:
+                if preset is NONE_PRESET:
+                    item.setToolTip("Quita los ajustes y vuelve a la foto original "
+                                    "(conserva el recorte). También puedes usar Ctrl+Z.")
+                elif preset.builtin:
                     item.setToolTip("Incluido con Lighteye · clic para aplicar")
                 self.list.addItem(item)
         if not mine:

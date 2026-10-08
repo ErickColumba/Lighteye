@@ -749,7 +749,10 @@ class MainWindow(QMainWindow):
         self._commit_history()
         self._apply_settings(apply_look(self.settings, preset.values))
         self._commit_history()
-        self.statusBar().showMessage(f"Preset aplicado: {preset.name}", 4000)
+        if preset.values:
+            self.statusBar().showMessage(f"Preset aplicado: {preset.name}", 4000)
+        else:
+            self.statusBar().showMessage("Ajustes quitados: foto original (Ctrl+Z para deshacer)", 4000)
 
     def save_preset(self) -> None:
         self._commit_history()
