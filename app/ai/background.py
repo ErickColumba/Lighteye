@@ -6,7 +6,6 @@ giro con una sola transformación afín.
 """
 
 import hashlib
-import os
 from pathlib import Path
 
 import cv2
@@ -91,8 +90,9 @@ def checkerboard(h: int, w: int, cell: int = 12) -> np.ndarray:
 
 
 def _cache_dir() -> Path:
-    base = os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
-    return Path(base) / "lighteye" / "background"
+    from app.paths import cache_dir
+
+    return cache_dir() / "background"
 
 
 def cache_key(photo: Path) -> str:

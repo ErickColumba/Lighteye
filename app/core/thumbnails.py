@@ -6,7 +6,6 @@ así editar una foto no invalida la caché.
 """
 
 import hashlib
-import os
 import re
 from pathlib import Path
 
@@ -23,8 +22,9 @@ THUMB_SIDE = 320
 
 
 def cache_dir() -> Path:
-    base = os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
-    return Path(base) / "lighteye" / "thumbs"
+    from app.paths import cache_dir as _cache_dir
+
+    return _cache_dir() / "thumbs"
 
 
 def _natural_key(path: Path):

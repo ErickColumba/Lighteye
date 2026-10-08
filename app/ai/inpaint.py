@@ -10,7 +10,6 @@ justo (no la foto entera), y el resultado se guarda en caché.
 
 import hashlib
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -130,8 +129,9 @@ def paste_patches(img: np.ndarray, patches: list[Patch], transform: np.ndarray |
 
 
 def _cache_dir() -> Path:
-    base = os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
-    return Path(base) / "lighteye" / "erase"
+    from app.paths import cache_dir
+
+    return cache_dir() / "erase"
 
 
 def cache_key(photo: Path, strokes) -> str:

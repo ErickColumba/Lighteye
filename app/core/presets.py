@@ -8,7 +8,6 @@ tools/make_default_presets.py); aparecen primero y no se pueden borrar.
 """
 
 import json
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,8 +19,9 @@ PRESET_VERSION = 1
 
 
 def config_dir() -> Path:
-    base = os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
-    return Path(base) / "lighteye"
+    from app.paths import config_dir as _config_dir
+
+    return _config_dir()
 
 
 def presets_dir() -> Path:

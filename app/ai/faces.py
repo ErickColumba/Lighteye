@@ -12,7 +12,6 @@ slider de intensidad no vuelve a ejecutar la IA.
 """
 
 import hashlib
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -146,8 +145,9 @@ def paste_faces(img: np.ndarray, faces: list[RestoredFace], strength: float,
 
 
 def _cache_dir() -> Path:
-    base = os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
-    return Path(base) / "lighteye" / "faces"
+    from app.paths import cache_dir
+
+    return cache_dir() / "faces"
 
 
 def cache_key(photo: Path, use_codeformer: bool, fidelity: float) -> str:

@@ -11,9 +11,26 @@ from app.ui.main_window import MainWindow
 
 def main() -> int:
     tune_allocator()
+    if "--self-test" in sys.argv:
+        from app.selftest import run
+
+        return run()
     app = QApplication(sys.argv)
     app.setApplicationName("Lighteye")
     app.setOrganizationName("Lighteye")
+    from pathlib import Path
+
+    from PySide6.QtGui import QIcon
+
+    from app import __version__
+
+    app.setApplicationVersion(__version__)
+    import app as app_package  # su ruta sirve igual en el repositorio y empaquetado
+
+    icon = Path(app_package.__file__).resolve().parent / "resources" / "lighteye.png"
+    app.setWindowIcon(QIcon(str(icon)))
+    # En Linux (Wayland/KDE) asocia la ventana con su lanzador .desktop.
+    app.setDesktopFileName("lighteye")
 
     # Textos estándar de Qt (Cancelar, Aceptar, diálogos de archivo) en español.
     translator = QTranslator(app)

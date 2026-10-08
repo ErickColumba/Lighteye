@@ -1,0 +1,98 @@
+# Compila Lighteye para Linux y Windows, en dos variantes:
+#   gpu: PyTorch con CUDA (usa la tarjeta NVIDIA si hay; si no, el procesador)
+#   cpu: solo procesador (paquete mucho más ligero)
+# Cada paquete incluye los modelos de IA, se comprueba con `--self-test` y se
+# publica en una «Release» de GitHub partido en trozos de menos de 2 GB.
+#
+# Cuándo se ejecuta:
+#   - A mano: pestaña Actions → «Compilar Lighteye» → Run workflow.
+#   - Al crear una etiqueta de versión (git tag v1.0.0 && git push --tags).
+
+name: Compilar Lighteye
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write  # para publicar la Release
+
+jobs:
+  compilar:
+    name: ${{ matrix.sistema }} · ${{ matrix.variante }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { sistema: linux, runner: ubuntu-22.04, variante: gpu, torch: cu128 }
+          - { sistema: linux, runner: ubuntu-22.04, variante: cpu, torch: cpu }
+          - { sistema: windows, runner: windows-latest, variante: gpu, torch: cu128 }
+          - { sistema: windows, runner: windows-latest, variante: cpu, torch: cpu }
+
+    steps:
+      - name: Liberar espacio en disco (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Herramientas del sistema (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full libegl1 libgl1 libxkbcommon0 libdbus-1-3
+
+      - name: Instalar PyTorch (${{ matrix.torch }}) y dependencias
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/${{ matrix.torch }}
+          pip install -r requirements.txt pyinstaller
+
+      - name: Pruebas
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q
+
+      - name: Descargar modelos de IA
+        run: python tools/download_models.py
+
+      - name: Compilar y empaquetar
+        run: python packaging/build.py --variant ${{ matrix.variante }} --archive
+
+      - name: Autocomprobación del programa compilado
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            ./dist/Lighteye/Lighteye.exe --self-test
+          else
+            ./dist/Lighteye/Lighteye --self-test
+          fi
+
+      - name: Publicar en la Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('compilacion-{0}', github.run_number) }}
+          name: ${{ github.ref_type == 'tag' && format('Lighteye {0}', github.ref_name) || format('Lighteye (compilación {0})', github.run_number) }}
+          prerelease: ${{ github.ref_type != 'tag' }}
+          files: dist/Lighteye-*.7z*
+          body: |
+            Descarga **todos los trozos** de tu sistema y variante (`.7z.001`, `.7z.002`…)
+            en la misma carpeta y abre el `.001` con 7-Zip (Windows) o `7z x` (Linux).
+
+            - **gpu**: usa la tarjeta NVIDIA si hay (más rápido); si no, el procesador.
+            - **cpu**: solo procesador; descarga más pequeña.
+
+            Linux: dentro de la carpeta, `./install.sh` lo añade al menú de aplicaciones.
+            Windows: abre `Lighteye.exe`; «Crear accesos directos.bat» lo añade al menú Inicio.

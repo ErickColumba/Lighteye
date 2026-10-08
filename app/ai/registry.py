@@ -5,16 +5,10 @@ paquete instalable). En el repositorio no se guardan por su tamaño: se
 descargan con `python tools/download_models.py`.
 """
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent.parent
-
-
-def models_dir() -> Path:
-    """Carpeta de modelos. Se puede cambiar con LIGHTEYE_MODELS."""
-    return Path(os.environ.get("LIGHTEYE_MODELS") or ROOT / "models")
+from app.paths import models_dir  # noqa: F401  (carpeta de modelos; LIGHTEYE_MODELS la cambia)
 
 
 @dataclass(frozen=True)

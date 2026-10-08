@@ -1,0 +1,27 @@
+LIGHTEYE — Editor de fotos no destructivo con herramientas de IA
+=================================================================
+
+Abrir
+-----
+- Windows: doble clic en Lighteye.exe. Para tenerlo en el menú Inicio y el
+  Escritorio, ejecuta «Crear accesos directos.bat».
+- Linux: ejecuta ./Lighteye, o ./install.sh para que aparezca en el menú de
+  aplicaciones (se desinstala con ./uninstall.sh).
+
+Variantes
+---------
+- gpu: usa la tarjeta NVIDIA si hay memoria libre; si no, el procesador.
+- cpu: solo procesador (más ligera; la IA tarda más).
+Ver VARIANTE.txt.
+
+Tus fotos
+---------
+Lighteye nunca modifica el original. Los ajustes de cada foto se guardan en un
+archivo junto a ella (foto.jpg.json). Para obtener el resultado, usa Exportar.
+
+Modelos de IA incluidos (carpeta models/) y sus licencias
+---------------------------------------------------------
+- Real-ESRGAN (BSD-3-Clause)            - GFPGAN (Apache-2.0)
+- CodeFormer (S-Lab 1.0: SOLO uso no comercial)
+- BiSeNet / facexlib (MIT)              - LaMa (Apache-2.0)
+- BiRefNet (MIT)                        - YuNet / OpenCV Zoo (MIT)
