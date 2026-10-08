@@ -9,12 +9,13 @@ import numpy as np
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
 from app.core.color import to_display_u8
+from app.core.histogram import compute_histogram
 from app.core.pipeline import process
 from app.core.settings import Settings
 
 
 class _WorkerSignals(QObject):
-    done = Signal(int, object)  # generación, imagen sRGB uint8 (o Exception)
+    done = Signal(int, object)  # generación, (imagen sRGB uint8, histograma) o Exception
 
 
 class _Worker(QRunnable):
@@ -27,14 +28,15 @@ class _Worker(QRunnable):
 
     def run(self):
         try:
-            result = to_display_u8(process(self.image, self.settings))
+            rgb = to_display_u8(process(self.image, self.settings))
+            result = (rgb, compute_histogram(rgb))
         except Exception as exc:  # noqa: BLE001 — se informa en el hilo principal
             result = exc
         self.signals.done.emit(self.generation, result)
 
 
 class PreviewRenderer(QObject):
-    rendered = Signal(object)  # imagen sRGB uint8 lista para el visor
+    rendered = Signal(object, object)  # imagen sRGB uint8 lista para el visor, histograma
     failed = Signal(str)
 
     def __init__(self, parent=None):
@@ -78,5 +80,5 @@ class PreviewRenderer(QObject):
             if isinstance(result, Exception):
                 self.failed.emit(str(result))
             else:
-                self.rendered.emit(result)
+                self.rendered.emit(*result)
         self._start_pending()

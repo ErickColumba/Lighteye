@@ -10,9 +10,12 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMainWindow,
     QMessageBox,
+    QVBoxLayout,
+    QWidget,
 )
 
 from app.core.color import to_display_u8
+from app.core.histogram import clipping_overlay, compute_histogram
 from app.core.loader import (
     SUPPORTED_EXTENSIONS,
     LoadedImage,
@@ -21,6 +24,7 @@ from app.core.loader import (
     make_preview,
 )
 from app.core.settings import Settings
+from app.ui.histogram import HistogramWidget
 from app.ui.panels import AdjustmentPanel
 from app.ui.renderer import PreviewRenderer
 from app.ui.viewer import ImageViewer
@@ -36,6 +40,7 @@ class MainWindow(QMainWindow):
         self.loaded: LoadedImage | None = None
         self.preview = None
         self.settings = Settings()
+        self.shown_rgb = None  # última imagen calculada (sRGB uint8)
 
         self.viewer = ImageViewer(self)
         self.setCentralWidget(self.viewer)
@@ -43,14 +48,21 @@ class MainWindow(QMainWindow):
         self.panel = AdjustmentPanel()
         self.panel.setEnabled(False)
         self.panel.changed.connect(self._on_param_changed)
+        self.histogram = HistogramWidget()
+        self.histogram.clipping_toggled.connect(lambda _: self._refresh_view())
+        side = QWidget()
+        side_layout = QVBoxLayout(side)
+        side_layout.setContentsMargins(0, 0, 0, 0)
+        side_layout.addWidget(self.histogram)
+        side_layout.addWidget(self.panel, 1)
         dock = QDockWidget("Ajustes", self)
         dock.setObjectName("ajustes")
         dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable)
-        dock.setWidget(self.panel)
+        dock.setWidget(side)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
 
         self.renderer = PreviewRenderer(self)
-        self.renderer.rendered.connect(self.viewer.set_image)
+        self.renderer.rendered.connect(self._on_rendered)
         self.renderer.failed.connect(lambda msg: self.statusBar().showMessage(f"Error: {msg}"))
 
         self._build_menus()
@@ -102,7 +114,9 @@ class MainWindow(QMainWindow):
         self.settings = Settings()
         self.panel.set_settings(self.settings)
         self.panel.setEnabled(True)
-        self.viewer.set_image(to_display_u8(self.preview), reset_view=True)
+        rgb = to_display_u8(self.preview)
+        self._on_rendered(rgb, compute_histogram(rgb))
+        self.viewer.fit()
 
         h, w = loaded.image.shape[:2]
         kind = "RAW" if loaded.is_raw else f"{loaded.info.get('bits', 8)} bits"
@@ -124,6 +138,20 @@ class MainWindow(QMainWindow):
         # La interfaz nunca procesa la imagen: solo pide un nuevo cálculo.
         if self.preview is not None:
             self.renderer.request(self.preview, self.settings)
+
+    def _on_rendered(self, rgb, histogram) -> None:
+        self.shown_rgb = rgb
+        self.histogram.set_histogram(histogram)
+        self._refresh_view()
+
+    def _refresh_view(self) -> None:
+        """Muestra la última imagen calculada, con o sin el aviso de recorte."""
+        if self.shown_rgb is None:
+            return
+        rgb = self.shown_rgb
+        if self.histogram.show_clipping:
+            rgb = clipping_overlay(rgb)
+        self.viewer.set_image(rgb)
 
     def closeEvent(self, event):
         self.renderer.shutdown()
