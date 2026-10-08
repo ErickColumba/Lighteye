@@ -146,6 +146,22 @@ def apply_geometry(img: np.ndarray, settings, with_crop: bool = True) -> np.ndar
                           borderMode=cv2.BORDER_REFLECT)
 
 
+def geometry_matrix(w: int, h: int, settings, with_crop: bool = True) -> np.ndarray:
+    """Matriz 3×3 que lleva un punto de la foto original (w×h) a su posición
+    en el resultado de apply_geometry. Sirve para colocar sobre la imagen ya
+    recortada cosas calculadas en la original (p. ej. rostros restaurados)."""
+    orient_m, ow, oh = _orientation_matrix(w, h, settings["rotate"], settings["flip_h"],
+                                           settings["flip_v"])
+    m, sw, sh = orient_m, ow, oh
+    if settings["angle"] != 0:
+        straight_m, sw, sh = _straighten_matrix(ow, oh, settings["angle"])
+        m = straight_m @ m
+    if with_crop:
+        x0, y0, _, _ = crop_pixels(sw, sh, settings["crop"])
+        m = np.array([[1, 0, -x0], [0, 1, -y0], [0, 0, 1]], float) @ m
+    return m
+
+
 def final_size(w: int, h: int, settings) -> tuple[int, int]:
     """Tamaño en píxeles del resultado de apply_geometry para una foto w×h."""
     if settings["rotate"] % 2:

@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import numpy as np
+
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
@@ -71,6 +73,10 @@ class MainWindow(QMainWindow):
         self.base_preview = None  # vista previa de la foto sin geometría
         self.preview = None  # imagen de origen que procesa el pipeline
         self._source_sig = None  # geometría con la que se calculó self.preview
+        self._geo_preview = None  # vista previa con la geometría, sin rostros
+        self._faces: dict[str, list] = {}  # rostros restaurados por clave de caché
+        self._faces_sig = None
+        self._face_worker = None
         self.crop_mode = False
         self._crop_backup: Settings | None = None
         self._export_worker: ExportWorker | None = None
@@ -324,7 +330,9 @@ class MainWindow(QMainWindow):
         self.filmstrip.mark_current(str(loaded.path))
         self.loaded = loaded
         self.base_preview = make_preview(loaded.image)
-        self.preview = self.base_preview
+        self.preview = self._geo_preview = self.base_preview
+        self._faces.clear()
+        self._faces_sig = None
         self._source_sig = geometry_signature(Settings())
         # Si la foto ya se había editado, se recuperan sus ajustes.
         self.settings = load_sidecar(loaded.path) or Settings()
@@ -443,19 +451,107 @@ class MainWindow(QMainWindow):
         un recorte pequeño no se vea borroso.
         """
         sig = geometry_signature(self.settings, with_crop=not self.crop_mode)
-        if sig == self._source_sig:
+        if sig != self._source_sig:
+            if self.crop_mode:
+                self._geo_preview = apply_geometry(self.base_preview, self.settings, with_crop=False)
+            elif is_identity(self.settings):
+                self._geo_preview = self.base_preview
+            else:
+                QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+                try:
+                    self._geo_preview = geometry_preview(self.loaded.image, self.settings,
+                                                         PREVIEW_LONG_SIDE)
+                finally:
+                    QApplication.restoreOverrideCursor()
+            self._source_sig = sig
+        self._apply_faces_to_source()
+
+    # --- Rostros (IA) -------------------------------------------------------------
+
+    def _face_key(self) -> str | None:
+        if self.loaded is None or self.settings["face_restore"] <= 0:
+            return None
+        from app.ai.faces import cache_key
+
+        return cache_key(self.loaded.path, bool(self.settings["face_codeformer"]),
+                         self.settings["face_fidelity"] / 100)
+
+    def _apply_faces_to_source(self) -> None:
+        """self.preview = imagen geométrica + rostros restaurados (si procede).
+
+        Las caras se calculan una vez a resolución completa (en segundo plano)
+        y aquí solo se pegan, transformadas al recorte y tamaño de la vista
+        previa: es instantáneo, también al mover la intensidad.
+        """
+        key = self._face_key()
+        faces = self._faces.get(key) if key else None
+        if key and faces is None:
+            self._request_faces(key)
+        strength = self.settings["face_restore"] / 100
+        sig = (self._source_sig, key if faces else None, strength if faces else 0)
+        if sig == self._faces_sig:
             return
-        if self.crop_mode:
-            self.preview = apply_geometry(self.base_preview, self.settings, with_crop=False)
-        elif is_identity(self.settings):
-            self.preview = self.base_preview
-        else:
-            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            try:
-                self.preview = geometry_preview(self.loaded.image, self.settings, PREVIEW_LONG_SIDE)
-            finally:
-                QApplication.restoreOverrideCursor()
-        self._source_sig = sig
+        self._faces_sig = sig
+        if not faces:
+            self.preview = self._geo_preview
+            return
+        from app.ai.faces import paste_faces
+        from app.core.geometry import geometry_matrix
+
+        h, w = self.loaded.image.shape[:2]
+        geo = geometry_matrix(w, h, self.settings, with_crop=not self.crop_mode)
+        # De la salida de la geometría a resolución completa → vista previa.
+        shown = self.settings
+        if self.crop_mode:  # en modo recorte se ve la foto entera (sin recortar)
+            shown = self.settings.copy()
+            shown["crop"] = FULL_CROP
+        fw, fh = final_size(w, h, shown)
+        ph, pw = self._geo_preview.shape[:2]
+        to_preview = np.diag([pw / fw, ph / fh, 1.0])
+        self.preview = paste_faces(self._geo_preview, faces, strength, to_preview @ geo)
+
+    def _request_faces(self, key: str) -> None:
+        from app.ai.faces import load_cached
+
+        cached = load_cached(key)
+        if cached is not None:
+            self._faces[key] = cached
+            self._report_faces(cached)
+            return
+        if self._face_worker is not None:
+            return  # ya hay uno calculando; al terminar se vuelve a comprobar
+        from app.ai import runtime
+        from app.ui.ai_worker import FaceWorker
+
+        if not (runtime.model_available("yunet") and runtime.model_available(
+                "codeformer" if self.settings["face_codeformer"] else "gfpgan")):
+            self.statusBar().showMessage("Restaurar rostros no disponible: faltan PyTorch o los modelos "
+                                         "(python tools/download_models.py)", 8000)
+            return
+        worker = FaceWorker(self.loaded.path, self.loaded.image, bool(self.settings["face_codeformer"]),
+                            self.settings["face_fidelity"] / 100, key, self)
+        worker.done.connect(self._faces_ready)
+        worker.failed.connect(lambda msg: (self.statusBar().showMessage(f"Error al restaurar rostros: {msg}",
+                                                                        8000), self._clear_face_worker()))
+        self._face_worker = worker
+        self.statusBar().showMessage(f"Restaurando rostros con IA… ({runtime.device_name()})")
+        worker.start()
+
+    def _clear_face_worker(self) -> None:
+        if self._face_worker is not None:
+            self._face_worker.deleteLater()
+        self._face_worker = None
+
+    def _faces_ready(self, key: str, faces: list) -> None:
+        self._faces[key] = faces
+        self._clear_face_worker()
+        self._report_faces(faces)
+        self._request_render()
+
+    def _report_faces(self, faces: list) -> None:
+        n = len(faces)
+        self.statusBar().showMessage("No se encontraron rostros en la foto" if n == 0 else
+                                     f"Rostros restaurados: {n}", 5000)
 
     # --- Recorte y enderezado -------------------------------------------------
 
@@ -578,8 +674,9 @@ class MainWindow(QMainWindow):
         """La imagen de origen (con su recorte) sin ajustes, en sRGB."""
         if self.preview is None:
             return None
-        if self._before_for is not self.preview:
-            self._before_rgb, self._before_for = to_display_u8(self.preview), self.preview
+        source = self._geo_preview if self._geo_preview is not None else self.preview
+        if self._before_for is not source:
+            self._before_rgb, self._before_for = to_display_u8(source), source
         return self._before_rgb
 
     def _refresh_view(self) -> None:
@@ -825,6 +922,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._commit_history()
+        if self._face_worker is not None:
+            self._face_worker.wait()
         worker = self._export_worker
         if worker is not None and worker.isRunning():
             worker.cancel()

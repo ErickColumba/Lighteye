@@ -30,7 +30,7 @@ class Param:
 
 
 # Grupos en el orden en que aparecen en el panel.
-GROUPS = ["Luz", "Curvas", "Color", "HSL", "LUT", "Detalle", "Efectos"]
+GROUPS = ["Rostros (IA)", "Luz", "Curvas", "Color", "HSL", "LUT", "Detalle", "Efectos"]
 
 PARAMS: list[Param] = [
     Param("exposure", "Exposición", "Luz", -4.0, 4.0, step=0.01),
@@ -79,6 +79,16 @@ PARAMS += [
     Param("flip_v", "Voltear vertical", "Geometría", 0, 1, kind="toggle"),
     Param("angle", "Enderezar", "Geometría", -45, 45, step=0.1),
 ]
+
+# IA: se aplican sobre la foto antes del resto de ajustes (no son un paso
+# del pipeline; ver app/ai/faces.py).
+PARAMS += [
+    Param("face_restore", "Restaurar rostros", "Rostros (IA)", 0, 100),
+    Param("face_codeformer", "Usar CodeFormer (más fiel a la identidad)", "Rostros (IA)", 0, 1,
+          kind="toggle"),
+    Param("face_fidelity", "Fidelidad (CodeFormer)", "Rostros (IA)", 0, 100, 70),
+]
+FACE_KEYS = ("face_restore", "face_codeformer", "face_fidelity")
 
 # HSL por color: (clave, nombre, centro del rango de tono en grados).
 HSL_COLORS = [

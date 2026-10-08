@@ -39,6 +39,25 @@ def device_name() -> str:
     return torch.cuda.get_device_name(0) if torch.cuda.is_available() else "procesador (CPU)"
 
 
+# Memoria de vídeo libre necesaria (aprox.) para usar la GPU con cada modelo.
+VRAM_NEEDED_MB = {"realesrgan_x4": 1200, "realesrgan_x2": 1200, "gfpgan": 1500,
+                  "codeformer": 1500, "bisenet": 600, "lama": 2500}
+
+
+def pick_device(key: str) -> str:
+    """GPU si hay una con memoria libre suficiente; si no, el procesador.
+
+    Así Lighteye funciona aunque otro programa (p. ej. ComfyUI) tenga la
+    GPU casi llena.
+    """
+    import torch
+
+    if not torch.cuda.is_available():
+        return "cpu"
+    free, _ = torch.cuda.mem_get_info()
+    return "cuda" if free / 2**20 >= VRAM_NEEDED_MB.get(key, 1500) else "cpu"
+
+
 def model_available(key: str) -> bool:
     return torch_available() and MODELS[key].available()
 
@@ -52,7 +71,7 @@ def load(key: str, device: str | None = None):
         import spandrel_extra_arches
 
         spandrel_extra_arches.install(ignore_duplicates=True)
-    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    device = device or pick_device(key)
     cache_key = f"{key}@{device}"
     with _lock:
         if cache_key not in _loaded:

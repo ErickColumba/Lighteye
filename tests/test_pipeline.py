@@ -30,7 +30,10 @@ def _scene(h, w):
 
 def test_every_param_belongs_to_a_pipeline_step():
     used = {k for keys, _ in STEPS for k in keys}
-    assert {p.key for p in PARAMS} | {"curves", "lut_path", "crop"} == used | set(GEOMETRY_KEYS)
+    from app.core.settings import FACE_KEYS
+
+    assert {p.key for p in PARAMS} | {"curves", "lut_path", "crop"} == \
+        used | set(GEOMETRY_KEYS) | set(FACE_KEYS)
 
 
 def test_full_resolution_matches_preview():

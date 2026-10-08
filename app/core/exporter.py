@@ -170,7 +170,13 @@ def export_image(src: Path, image: np.ndarray, settings: Settings, out_path: Pat
         if progress:
             progress(share * done / max(total, 1))
 
-    linear = render_full(image, settings, step)
+    faces = None
+    if settings["face_restore"] > 0:
+        from app.ai.faces import faces_for
+
+        faces = faces_for(Path(src), image, bool(settings["face_codeformer"]),
+                          settings["face_fidelity"] / 100)
+    linear = render_full(image, settings, step, faces)
     if upscaling:
         linear = ai_upscale(linear, options.ai_scale,
                             lambda f: progress(share + 0.5 * f) if progress else None)

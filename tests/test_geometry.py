@@ -100,3 +100,18 @@ def test_geometry_preview_matches_full_then_reduce():
         assert fast.shape == ref.shape
         assert np.abs(fast - ref)[3:-3, 3:-3].mean() < 0.01
     assert geo.final_size(1500, 900, Settings({"rotate": 1, "crop": [0, 0, 0.5, 1]})) == (450, 1500)
+
+
+@pytest.mark.parametrize("values", [{}, {"rotate": 1}, {"rotate": 3, "flip_h": 1},
+                                    {"angle": 6, "crop": [0.1, 0.2, 0.6, 0.5]},
+                                    {"rotate": 2, "flip_v": 1, "crop": [0.3, 0.1, 0.5, 0.7]}])
+def test_geometry_matrix_follows_the_pixels(values):
+    img = np.zeros((300, 400, 3), np.float32)
+    x, y = 250, 120
+    img[y - 2:y + 3, x - 2:x + 3] = 1.0  # un punto brillante
+    s = Settings(values)
+    out = geo.apply_geometry(img, s)
+    m = geo.geometry_matrix(400, 300, s)
+    px, py, _ = m @ np.array([x + 0.5, y + 0.5, 1.0])  # centro del píxel (coordenadas de borde)
+    ys, xs = np.nonzero(out[..., 0] > 0.3)
+    assert abs(xs.mean() + 0.5 - px) < 1.5 and abs(ys.mean() + 0.5 - py) < 1.5

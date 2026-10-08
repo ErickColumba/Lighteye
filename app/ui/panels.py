@@ -250,8 +250,23 @@ class AdjustmentPanel(QScrollArea):
         self.lut_picker.changed.connect(lambda path: self.changed.emit("lut_path", path))
         self._add_custom("LUT", self.lut_picker, top=True)
 
+        self._check_ai()
+
         layout.addStretch(1)
         self.setWidget(content)
+
+    def _check_ai(self) -> None:
+        """Las herramientas de IA se desactivan si faltan PyTorch o los modelos."""
+        from app.ai import runtime
+
+        section = self.sections["Rostros (IA)"]
+        if runtime.model_available("gfpgan") and runtime.model_available("yunet"):
+            section.toggle.setToolTip(f"Se calcula con: {runtime.device_name()}")
+            return
+        section.body.setEnabled(False)
+        section.toggle.setChecked(False)
+        section.toggle.setToolTip("No disponible: faltan PyTorch o los modelos de IA "
+                                  "(python tools/download_models.py)")
 
     def _add_custom(self, group: str, widget: QWidget, top: bool = False) -> None:
         section = self.sections[group]

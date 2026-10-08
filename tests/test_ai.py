@@ -47,3 +47,84 @@ def test_export_with_ai_scale(tmp_path):
 
 def test_device_name_is_text():
     assert isinstance(runtime.device_name(), str)
+
+
+# --- Pegar rostros (sin modelos: caras sintéticas) ------------------------------
+
+def _fake_face(center_xy, size, color):
+    """Un 'rostro restaurado' de color liso cuyo recorte cubre `size` píxeles
+    alrededor de `center_xy` en la foto original."""
+    from app.ai.faces import FACE_SIZE, RestoredFace
+
+    k = FACE_SIZE / size
+    cx, cy = center_xy
+    matrix = np.array([[k, 0, FACE_SIZE / 2 - k * cx], [0, k, FACE_SIZE / 2 - k * cy]], np.float32)
+    return RestoredFace(np.full((FACE_SIZE, FACE_SIZE, 3), color, np.float32), matrix)
+
+
+def _centroid(img, channel=0):
+    ys, xs = np.nonzero(img[..., channel] > 0.5)
+    return xs.mean(), ys.mean()
+
+
+def test_paste_faces_strength_and_position():
+    from app.ai.faces import paste_faces
+
+    img = np.zeros((300, 400, 3), np.float32)
+    face = _fake_face((120, 100), 80, (1.0, 0.0, 0.0))
+    assert paste_faces(img, [face], 0.0) is img
+    out = paste_faces(img, [face], 1.0)
+    cx, cy = _centroid(out)
+    assert abs(cx - 120) < 2 and abs(cy - 100) < 2
+    half = paste_faces(img, [face], 0.5)
+    assert abs(half[100, 120, 0] - 0.5) < 0.05
+    assert np.array_equal(out[250:, 300:], img[250:, 300:])  # fuera de la cara, intacta
+
+
+def test_paste_faces_follows_geometry_and_scale():
+    from app.ai.faces import paste_faces
+    from app.core.geometry import apply_geometry, geometry_matrix
+    from app.core.settings import Settings
+
+    img = np.zeros((300, 400, 3), np.float32)
+    face = _fake_face((300, 80), 60, (1.0, 0.0, 0.0))
+    s = Settings({"rotate": 1, "angle": 5, "crop": [0.0, 0.3, 0.9, 0.6]})
+    geo = apply_geometry(img, s)
+    m = geometry_matrix(400, 300, s)
+    out = paste_faces(geo, [face], 1.0, m)
+    expected = m @ np.array([300, 80, 1.0])
+    cx, cy = _centroid(out)
+    assert abs(cx - expected[0]) < 2 and abs(cy - expected[1]) < 2
+    # Reducido a la mitad (vista previa)
+    small = np.zeros((geo.shape[0] // 2, geo.shape[1] // 2, 3), np.float32)
+    out_small = paste_faces(small, [face], 1.0, np.diag([0.5, 0.5, 1]) @ m)
+    sx, sy = _centroid(out_small)
+    assert abs(sx - expected[0] / 2) < 2 and abs(sy - expected[1] / 2) < 2
+
+
+def test_face_cache_roundtrip(tmp_path, monkeypatch):
+    from app.ai import faces as fx
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    photo = tmp_path / "p.jpg"
+    photo.write_bytes(b"x")
+    key = fx.cache_key(photo, True, 0.7)
+    assert key != fx.cache_key(photo, False, 0.7) != fx.cache_key(photo, True, 0.5)
+    assert fx.load_cached(key) is None
+    face = _fake_face((50, 50), 40, (0.2, 0.4, 0.6))
+    fx.save_cached(key, [face])
+    loaded = fx.load_cached(key)
+    assert len(loaded) == 1
+    assert np.allclose(loaded[0].face, face.face, atol=1e-3)
+    assert np.allclose(loaded[0].matrix, face.matrix)
+
+
+def test_render_full_pastes_faces_only_when_enabled():
+    from app.core.pipeline import render_full
+    from app.core.settings import Settings
+
+    img = np.zeros((200, 200, 3), np.float32)
+    face = _fake_face((100, 100), 50, (1.0, 0.0, 0.0))
+    assert render_full(img, Settings(), faces=[face]).max() == 0
+    out = render_full(img, Settings({"face_restore": 100}), faces=[face])
+    assert out[100, 100, 0] > 0.9
