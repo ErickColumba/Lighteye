@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDockWidget,
     QFileDialog,
+    QInputDialog,
     QMainWindow,
     QMessageBox,
     QProgressDialog,
@@ -35,11 +36,13 @@ from app.core.loader import (
     load_image,
     make_preview,
 )
+from app.core.presets import apply_look, delete_preset, list_presets, save_preset
 from app.core.settings import Settings, load_sidecar, save_sidecar, sidecar_path
 from app.ui.crop_tools import CropToolbar
 from app.ui.export_dialog import ExportDialog, ExportWorker, ask_output_path
 from app.ui.histogram import HistogramWidget
 from app.ui.panels import AdjustmentPanel
+from app.ui.presets_panel import PresetPanel
 from app.ui.renderer import PreviewRenderer
 from app.ui.viewer import ImageViewer
 
@@ -86,6 +89,19 @@ class MainWindow(QMainWindow):
         dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable)
         dock.setWidget(side)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+
+        self.presets = PresetPanel()
+        self.presets.setEnabled(False)
+        self.presets.apply_requested.connect(self.apply_preset)
+        self.presets.save_requested.connect(self.save_preset)
+        self.presets.delete_requested.connect(self.delete_preset)
+        presets_dock = QDockWidget("Presets", self)
+        presets_dock.setObjectName("presets")
+        presets_dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable
+                                 | QDockWidget.DockWidgetFeature.DockWidgetClosable)
+        presets_dock.setWidget(self.presets)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, presets_dock)
+        self.presets_dock = presets_dock
 
         self.crop_tools = CropToolbar(self)
         self.crop_tools.setVisible(False)
@@ -137,6 +153,8 @@ class MainWindow(QMainWindow):
         self.before_action = self._add_action(view_menu, "Antes / &Después", "\\", self.toggle_before)
         self.before_action.setCheckable(True)
         view_menu.addSeparator()
+        view_menu.addAction(self.presets_dock.toggleViewAction())
+        view_menu.addSeparator()
         self._add_action(view_menu, "&Ajustar a la ventana", "Ctrl+0", self.viewer.fit)
         self._add_action(view_menu, "Tamaño &real (100 %)", "Ctrl+1", self.viewer.zoom_100)
 
@@ -182,12 +200,14 @@ class MainWindow(QMainWindow):
         self._update_history_actions()
         self.panel.set_settings(self.settings)
         self.panel.setEnabled(True)
+        self.presets.setEnabled(True)
         self.export_action.setEnabled(True)
         rgb = to_display_u8(self.base_preview)
         self.before_rgb = rgb
         self._set_before(False)
         self._on_rendered(rgb, compute_histogram(rgb))
         self._request_render()
+        self._update_preset_thumbs()
         self.viewer.fit()
 
         h, w = loaded.image.shape[:2]
@@ -222,6 +242,7 @@ class MainWindow(QMainWindow):
         self._history_timer.stop()
         if self.preview is not None and self.history.push(self.settings):
             self._save_sidecar()
+            self._update_preset_thumbs()
         self._update_history_actions()
 
     def _save_sidecar(self) -> None:
@@ -411,6 +432,48 @@ class MainWindow(QMainWindow):
         if self.histogram.show_clipping:
             rgb = clipping_overlay(rgb)
         self.viewer.set_image(rgb)
+
+    # --- Presets ----------------------------------------------------------------
+
+    def _update_preset_thumbs(self) -> None:
+        """Las miniaturas de los presets muestran la foto actual con su recorte."""
+        if self.preview is None or self.crop_mode:
+            return
+        self.presets.set_photo(make_preview(self.preview, 112), self.settings)
+
+    def apply_preset(self, preset) -> None:
+        if self.preview is None:
+            return
+        if self.crop_mode:
+            self.apply_crop()
+        self._commit_history()
+        self._apply_settings(apply_look(self.settings, preset.values))
+        self._commit_history()
+        self.statusBar().showMessage(f"Preset aplicado: {preset.name}", 4000)
+
+    def save_preset(self) -> None:
+        self._commit_history()
+        name, ok = QInputDialog.getText(self, "Guardar preset", "Nombre del preset:")
+        name = name.strip()
+        if not ok or not name:
+            return
+        if any(p.name.lower() == name.lower() for p in list_presets()):
+            answer = QMessageBox.question(self, "Lighteye", f"Ya existe «{name}». ¿Reemplazarlo?")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            save_preset(name, self.settings)
+        except OSError as exc:
+            QMessageBox.warning(self, "Lighteye", f"No se pudo guardar el preset:\n{exc}")
+            return
+        self.presets.reload()
+        self.statusBar().showMessage(f"Preset guardado: {name}", 4000)
+
+    def delete_preset(self, preset) -> None:
+        answer = QMessageBox.question(self, "Lighteye", f"¿Eliminar el preset «{preset.name}»?")
+        if answer == QMessageBox.StandardButton.Yes:
+            delete_preset(preset)
+            self.presets.reload()
 
     # --- Exportar ---------------------------------------------------------------
 
