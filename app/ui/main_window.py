@@ -82,6 +82,10 @@ class MainWindow(QMainWindow):
         self._erase_worker = None
         self._alphas: dict = {}  # máscara del sujeto por foto (quitar fondo)
         self._bg_worker = None
+        # Indicador de carga: tareas de IA en marcha → (texto, inicio, dispositivo)
+        self._busy_tasks: dict[str, tuple] = {}
+        self._busy_timer = QTimer(self, interval=500)
+        self._busy_timer.timeout.connect(self._refresh_busy)
         self.erase_mode = False
         self.crop_mode = False
         self._crop_backup: Settings | None = None
@@ -569,6 +573,40 @@ class MainWindow(QMainWindow):
         ph, pw = self.preview.shape[:2]
         return np.diag([pw / fw, ph / fh, 1.0]) @ geo
 
+    # --- Indicador de carga de las tareas de IA ---------------------------------------
+
+    def _task_started(self, name: str, text: str, model: str) -> None:
+        import time
+
+        from app.ai import runtime
+
+        device = "GPU" if runtime.pick_device(model) == "cuda" else "procesador"
+        self._busy_tasks[name] = (text, time.monotonic(), device)
+        self._busy_timer.start()
+        self._refresh_busy()
+
+    def _task_finished(self, name: str) -> None:
+        self._busy_tasks.pop(name, None)
+        if not self._busy_tasks:
+            self._busy_timer.stop()
+        self._refresh_busy()
+
+    def _refresh_busy(self) -> None:
+        import time
+
+        lines = []
+        for text, start, device in self._busy_tasks.values():
+            lines.append(f"{text}  {time.monotonic() - start:.0f} s")
+        if lines:
+            device = next(iter(self._busy_tasks.values()))[2]
+            hint = "con la GPU" if device == "GPU" else "con el procesador (la GPU está ocupada): puede tardar"
+            lines.append(hint)
+        self.viewer.set_busy("\n".join(lines))
+
+    def _task_failed(self, name: str, title: str, message: str) -> None:
+        self._task_finished(name)
+        QMessageBox.warning(self, "Lighteye", f"{title}:\n{message}")
+
     # --- Quitar el fondo (BiRefNet) -------------------------------------------------
 
     def _background_post(self):
@@ -617,10 +655,10 @@ class MainWindow(QMainWindow):
             return
         worker = BackgroundWorker(self.loaded.path, self.loaded.image, self)
         worker.done.connect(self._background_ready)
-        worker.failed.connect(lambda msg: (self.statusBar().showMessage(f"Error al quitar el fondo: {msg}",
-                                                                        8000), self._clear_bg_worker()))
+        worker.failed.connect(lambda msg: (self._clear_bg_worker(),
+                                           self._task_failed("background", "No se pudo quitar el fondo", msg)))
         self._bg_worker = worker
-        self.statusBar().showMessage(f"Separando el sujeto del fondo con IA… ({runtime.device_name()})")
+        self._task_started("background", "Quitando el fondo con IA…", "birefnet")
         worker.start()
 
     def _clear_bg_worker(self) -> None:
@@ -629,6 +667,7 @@ class MainWindow(QMainWindow):
         self._bg_worker = None
 
     def _background_ready(self, path: str, alpha) -> None:
+        self._task_finished("background")
         self._alphas[Path(path)] = alpha
         self._clear_bg_worker()
         self.statusBar().showMessage("Fondo quitado. Elige transparente o un color en «Fondo (IA)»", 5000)
@@ -703,12 +742,12 @@ class MainWindow(QMainWindow):
             return
         worker = EraseWorker(self.loaded.path, self.loaded.image, self.settings["erase_strokes"], key, self)
         worker.done.connect(self._erase_ready)
-        worker.failed.connect(lambda msg: (self.statusBar().showMessage(f"Error al borrar: {msg}", 8000),
-                                           self._clear_erase_worker()))
+        worker.failed.connect(lambda msg: (self._clear_erase_worker(),
+                                           self._task_failed("erase", "No se pudo borrar", msg)))
         self._erase_worker = worker
         cached = (_cache_dir() / f"{key}.npz").is_file()
         if not cached:
-            self.statusBar().showMessage(f"Borrando con IA… ({runtime.device_name()})")
+            self._task_started("erase", "Borrando con IA…", "lama")
         worker.start()
 
     def _clear_erase_worker(self) -> None:
@@ -717,6 +756,7 @@ class MainWindow(QMainWindow):
         self._erase_worker = None
 
     def _erase_ready(self, key: str, patches: list) -> None:
+        self._task_finished("erase")
         self._patches[key] = patches
         self._clear_erase_worker()
         if self.erase_mode:
@@ -744,10 +784,11 @@ class MainWindow(QMainWindow):
         worker = FaceWorker(self.loaded.path, self.loaded.image, bool(self.settings["face_codeformer"]),
                             self.settings["face_fidelity"] / 100, key, self)
         worker.done.connect(self._faces_ready)
-        worker.failed.connect(lambda msg: (self.statusBar().showMessage(f"Error al restaurar rostros: {msg}",
-                                                                        8000), self._clear_face_worker()))
+        worker.failed.connect(lambda msg: (self._clear_face_worker(),
+                                           self._task_failed("faces", "No se pudieron restaurar los rostros", msg)))
+        self._task_started("faces", "Restaurando rostros con IA…",
+                           "codeformer" if self.settings["face_codeformer"] else "gfpgan")
         self._face_worker = worker
-        self.statusBar().showMessage(f"Restaurando rostros con IA… ({runtime.device_name()})")
         worker.start()
 
     def _clear_face_worker(self) -> None:
@@ -756,6 +797,7 @@ class MainWindow(QMainWindow):
         self._face_worker = None
 
     def _faces_ready(self, key: str, faces: list) -> None:
+        self._task_finished("faces")
         self._faces[key] = faces
         self._clear_face_worker()
         self._report_faces(faces)
@@ -773,10 +815,10 @@ class MainWindow(QMainWindow):
             return
         worker = ParseWorker(self.loaded.path, self.loaded.image, self)
         worker.done.connect(self._parses_ready)
-        worker.failed.connect(lambda msg: (self.statusBar().showMessage(f"Error en el análisis facial: {msg}",
-                                                                        8000), self._clear_parse_worker()))
+        worker.failed.connect(lambda msg: (self._clear_parse_worker(),
+                                           self._task_failed("parse", "No se pudo analizar el rostro", msg)))
+        self._task_started("parse", "Analizando el rostro (piel, ojos, labios, pelo)…", "bisenet")
         self._parse_worker = worker
-        self.statusBar().showMessage("Analizando el rostro (piel, ojos, labios, pelo)…")
         worker.start()
 
     def _clear_parse_worker(self) -> None:
@@ -785,6 +827,7 @@ class MainWindow(QMainWindow):
         self._parse_worker = None
 
     def _parses_ready(self, path: str, parses: list) -> None:
+        self._task_finished("parse")
         self._parses[Path(path)] = parses
         self._clear_parse_worker()
         self.statusBar().showMessage("No se encontraron rostros en la foto" if not parses else

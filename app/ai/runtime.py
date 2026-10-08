@@ -26,6 +26,8 @@ warnings.filterwarnings("ignore", category=FutureWarning, module=r"torch\.jit")
 cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
 
 _lock = threading.Lock()
+# Se activa para repetir en el procesador una tarea que agotó la memoria de vídeo.
+FORCE_CPU = threading.Event()
 _loaded: dict[str, object] = {}
 
 
@@ -60,7 +62,7 @@ def pick_device(key: str) -> str:
     """
     import torch
 
-    if not torch.cuda.is_available():
+    if FORCE_CPU.is_set() or not torch.cuda.is_available():
         return "cpu"
     free, _ = torch.cuda.mem_get_info()
     return "cuda" if free / 2**20 >= VRAM_NEEDED_MB.get(key, 1500) else "cpu"

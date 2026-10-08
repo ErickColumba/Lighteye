@@ -6,6 +6,23 @@ import numpy as np
 from PySide6.QtCore import QThread, Signal
 
 
+def run_with_cpu_fallback(fn):
+    """Ejecuta fn(); si la GPU se queda sin memoria, la repite en el procesador."""
+    from app.ai import runtime
+
+    try:
+        return fn()
+    except Exception as exc:  # noqa: BLE001
+        if "out of memory" not in str(exc).lower():
+            raise
+        runtime.release()
+        runtime.FORCE_CPU.set()
+        try:
+            return fn()
+        finally:
+            runtime.FORCE_CPU.clear()
+
+
 class BackgroundWorker(QThread):
     """Máscara del sujeto (quitar fondo) con BiRefNet, con caché."""
 
@@ -20,7 +37,7 @@ class BackgroundWorker(QThread):
         from app.ai.background import alpha_for
 
         try:
-            alpha = alpha_for(self.photo, self.linear)
+            alpha = run_with_cpu_fallback(lambda: alpha_for(self.photo, self.linear))
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(str(exc) or exc.__class__.__name__)
         else:
@@ -41,7 +58,7 @@ class EraseWorker(QThread):
         from app.ai.inpaint import patches_for
 
         try:
-            patches = patches_for(self.photo, self.linear, self.strokes)
+            patches = run_with_cpu_fallback(lambda: patches_for(self.photo, self.linear, self.strokes))
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(str(exc) or exc.__class__.__name__)
         else:
@@ -62,7 +79,7 @@ class ParseWorker(QThread):
         from app.ai.faces import parses_for
 
         try:
-            parses = parses_for(self.photo, self.linear)
+            parses = run_with_cpu_fallback(lambda: parses_for(self.photo, self.linear))
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(str(exc) or exc.__class__.__name__)
         else:
@@ -85,7 +102,7 @@ class FaceWorker(QThread):
         from app.ai.faces import faces_for
 
         try:
-            faces = faces_for(self.photo, self.linear, self.use_codeformer, self.fidelity)
+            faces = run_with_cpu_fallback(lambda: faces_for(self.photo, self.linear, self.use_codeformer, self.fidelity))
         except Exception as exc:  # noqa: BLE001 — se muestra al usuario
             self.failed.emit(str(exc) or exc.__class__.__name__)
         else:

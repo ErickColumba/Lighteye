@@ -1,7 +1,7 @@
 """Visor de imagen con zoom (rueda del ratón) y desplazamiento (arrastrar)."""
 
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QGraphicsItem,
@@ -152,13 +152,61 @@ class ImageViewer(QGraphicsView):
 
         self._fit_mode = True
         self._label = ""
+        # Indicador de carga (tareas de IA): texto y ángulo de la rueda.
+        self._busy = ""
+        self._spin = 0
+        self._spin_timer = QTimer(self, interval=40)
+        self._spin_timer.timeout.connect(self._tick)
 
     def set_label(self, text: str) -> None:
         """Texto fijo en la esquina del visor (p. ej. "Antes")."""
         self._label = text
         self.viewport().update()
 
+    def set_busy(self, text: str) -> None:
+        """Muestra (texto) u oculta ("") el indicador de carga en el centro."""
+        self._busy = text
+        if text and not self._spin_timer.isActive():
+            self._spin_timer.start()
+        elif not text:
+            self._spin_timer.stop()
+        self.viewport().update()
+
+    def _tick(self) -> None:
+        self._spin = (self._spin + 12) % 360
+        self.viewport().update()
+
+    def _draw_busy(self, painter: QPainter) -> None:
+        painter.save()
+        painter.resetTransform()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        font = QFont(painter.font())
+        font.setPointSize(11)
+        font.setBold(True)
+        painter.setFont(font)
+        lines = self._busy.split("\n")
+        text_w = max(painter.fontMetrics().horizontalAdvance(t) for t in lines)
+        w, h = text_w + 90, 30 + 22 * len(lines)
+        vp = self.viewport().rect()
+        box = QRectF(vp.center().x() - w / 2, vp.center().y() - h / 2, w, h)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(20, 20, 20, 215))
+        painter.drawRoundedRect(box, 10, 10)
+        ring = QRectF(box.left() + 20, box.center().y() - 14, 28, 28)
+        painter.setPen(QPen(QColor(255, 255, 255, 60), 4))
+        painter.drawEllipse(ring)
+        pen = QPen(QColor(80, 160, 255), 4)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawArc(ring, -self._spin * 16, 100 * 16)
+        painter.setPen(QColor(255, 255, 255))
+        text_box = QRectF(ring.right() + 16, box.top() + 15, text_w + 10, h - 30)
+        painter.drawText(text_box, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self._busy)
+        painter.restore()
+
     def drawForeground(self, painter: QPainter, rect) -> None:
+        if self._busy:
+            self._draw_busy(painter)
         if not self._label:
             return
         painter.save()
