@@ -1,17 +1,16 @@
 """Panel de ajustes: un slider por parámetro, en secciones plegables."""
 
 import math
-from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QMessageBox,
-    QPushButton,
     QScrollArea,
     QSizePolicy,
     QSlider,
@@ -21,7 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.core.lut import load_cube
+from app.core.lut import BUILTIN_PREFIX, builtin_luts, display_name, load_cube
 from app.core.settings import GROUPS, PARAMS, Param, Settings
 from app.ui.curve_editor import CurveEditor
 
@@ -148,42 +147,65 @@ class CollapsibleSection(QWidget):
 
 
 class LutPicker(QWidget):
-    """Nombre del LUT actual con botones para cargar otro o quitarlo."""
+    """Lista de LUT: los incluidos con Lighteye y cualquier archivo .cube."""
 
-    changed = Signal(object)  # ruta (str) o None
+    changed = Signal(object)  # ruta o "lighteye:…" (str), o None
+    _OTHER = "__otro__"
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.name = QLabel()
-        self.name.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        load = QPushButton("Cargar…")
-        self.remove = QPushButton("Quitar")
+        self.combo = QComboBox()
+        self.combo.setToolTip("Estilo de color. Los incluidos vienen con Lighteye; "
+                              "«Otro archivo…» carga cualquier .cube")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 4)
-        layout.addWidget(self.name, 1)
-        layout.addWidget(load)
-        layout.addWidget(self.remove)
-        load.clicked.connect(self._choose)
-        self.remove.clicked.connect(lambda: self._set(None))
+        layout.addWidget(self.combo, 1)
+        self.combo.activated.connect(self._activated)
+        self._current: str | None = None
         self.set_path(None)
 
+    def _fill(self) -> None:
+        self.combo.blockSignals(True)
+        self.combo.clear()
+        self.combo.addItem("Ninguno", None)
+        for title, key in builtin_luts():
+            self.combo.addItem(title, key)
+        if self._current and not self._current.startswith(BUILTIN_PREFIX):
+            self.combo.insertSeparator(self.combo.count())
+            self.combo.addItem(display_name(self._current), self._current)
+            self.combo.setItemData(self.combo.count() - 1, self._current, Qt.ItemDataRole.ToolTipRole)
+        self.combo.insertSeparator(self.combo.count())
+        self.combo.addItem("Otro archivo…", self._OTHER)
+        index = self.combo.findData(self._current)
+        self.combo.setCurrentIndex(max(0, index))
+        self.combo.blockSignals(False)
+
     def set_path(self, path: str | None) -> None:
-        self.name.setText(Path(path).name if path else "Ninguno")
-        self.name.setToolTip(path or "")
-        self.remove.setEnabled(bool(path))
+        self._current = path
+        self._fill()
+
+    def _activated(self, index: int) -> None:
+        value = self.combo.itemData(index)
+        if value == self._OTHER:
+            self._choose()
+            return
+        if value != self._current:
+            self._set(value)
 
     def _choose(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self, "Cargar LUT", "", "LUT (*.cube *.CUBE);;Todos los archivos (*)"
         )
-        if not path:
-            return
-        try:
-            load_cube(path)  # se valida aquí para avisar enseguida si está mal
-        except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "Lighteye", f"No se pudo cargar el LUT:\n{exc}")
-            return
-        self._set(path)
+        if path:
+            try:
+                load_cube(path)  # se valida aquí para avisar enseguida si está mal
+            except (OSError, ValueError) as exc:
+                QMessageBox.warning(self, "Lighteye", f"No se pudo cargar el LUT:\n{exc}")
+                path = None
+        if path:
+            self._set(path)
+        else:
+            self._fill()  # vuelve a mostrar el LUT que había
 
     def _set(self, path: str | None) -> None:
         self.set_path(path)

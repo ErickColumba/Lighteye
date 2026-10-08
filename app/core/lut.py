@@ -3,6 +3,10 @@
 Admite LUT 3D (LUT_3D_SIZE) con interpolación trilineal y LUT 1D
 (LUT_1D_SIZE). Se aplican en espacio sRGB, que es lo que esperan casi todas
 las LUT creativas.
+
+Lighteye trae algunos LUT de ejemplo en app/luts/. En los ajustes se guardan
+como "lighteye:nombre.cube" (no como ruta absoluta), para que sigan
+funcionando aunque la aplicación se mueva de carpeta.
 """
 
 from dataclasses import dataclass
@@ -69,13 +73,52 @@ def parse_cube(text: str) -> CubeLUT:
     return CubeLUT(title, size, is_3d, table, dmin, dmax)
 
 
+BUILTIN_PREFIX = "lighteye:"
+BUILTIN_DIR = Path(__file__).resolve().parent.parent / "luts"
+
+
+def resolve_path(path: str | Path) -> Path:
+    """Ruta real de un LUT (traduce los "lighteye:…" incluidos)."""
+    text = str(path)
+    if text.startswith(BUILTIN_PREFIX):
+        return BUILTIN_DIR / Path(text[len(BUILTIN_PREFIX):]).name
+    return Path(text)
+
+
+def _title(path: Path) -> str:
+    try:
+        with path.open(encoding="utf-8", errors="replace") as f:
+            for _ in range(20):
+                line = f.readline()
+                if line.upper().startswith("TITLE"):
+                    return line.partition(" ")[2].strip().strip('"') or path.stem
+    except OSError:
+        pass
+    return path.stem
+
+
+def builtin_luts() -> list[tuple[str, str]]:
+    """[(título, "lighteye:archivo.cube")] de los LUT incluidos, por título."""
+    if not BUILTIN_DIR.is_dir():
+        return []
+    items = [(_title(f), BUILTIN_PREFIX + f.name) for f in BUILTIN_DIR.glob("*.cube")]
+    return sorted(items, key=lambda item: item[0].lower())
+
+
+def display_name(path: str | Path) -> str:
+    """Nombre para mostrar: el título de un LUT incluido o el nombre del archivo."""
+    if str(path).startswith(BUILTIN_PREFIX):
+        return _title(resolve_path(path))
+    return Path(path).name
+
+
 @lru_cache(maxsize=4)
 def _load_cached(path: str, mtime: float) -> CubeLUT:
     return parse_cube(Path(path).read_text(encoding="utf-8", errors="replace"))
 
 
 def load_cube(path: str | Path) -> CubeLUT:
-    path = Path(path)
+    path = resolve_path(path)
     if not path.is_file():
         raise ValueError(f"No se encontró el LUT: {path.name}")
     return _load_cached(str(path), path.stat().st_mtime)

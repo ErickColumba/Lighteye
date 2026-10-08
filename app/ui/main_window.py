@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt, QTimer
+from PySide6.QtCore import QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -11,8 +11,12 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QInputDialog,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressDialog,
+    QSizePolicy,
+    QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -48,6 +52,8 @@ from app.ui.export_dialog import (
     ask_output_path,
 )
 from app.ui.histogram import HistogramWidget
+from app.ui.icons import icon
+from app.ui.view_bar import ViewModeBar
 from app.ui.panels import AdjustmentPanel
 from app.ui.presets_panel import PresetPanel
 from app.ui.renderer import PreviewRenderer
@@ -71,8 +77,10 @@ class MainWindow(QMainWindow):
         self.copied_look: dict | None = None  # ajustes copiados (sin geometría)
         self.settings = Settings()
         self.shown_rgb = None  # última imagen calculada (sRGB uint8)
-        self.before_rgb = None  # la foto sin ajustes, para comparar
-        self.show_before = False
+        # Modo de vista: "after" (resultado), "before" (original) o "compare".
+        self.view_mode = "after"
+        self._before_rgb = None  # la foto de origen sin ajustes (para comparar)
+        self._before_for = None  # imagen de origen con la que se calculó
         self.history = History(self.settings)
         # Mover un slider genera decenas de cambios: se guardan en el historial
         # como un solo paso cuando el usuario se detiene un momento.
@@ -83,7 +91,21 @@ class MainWindow(QMainWindow):
         self._settle_timer.timeout.connect(self._request_render)
 
         self.viewer = ImageViewer(self)
-        self.setCentralWidget(self.viewer)
+        # Redibujar al momento desde el evento del ratón provoca otro evento
+        # (bucle); se agrupa en un único redibujado en la siguiente vuelta.
+        self._view_refresh = QTimer(self, singleShot=True, interval=0)
+        self._view_refresh.timeout.connect(self._refresh_view)
+        self.viewer.compare_divider.moved.connect(lambda _: self._view_refresh.start())
+        self.view_bar = ViewModeBar()
+        self.view_bar.mode_changed.connect(self.set_view_mode)
+        self.view_bar.setEnabled(False)
+        center = QWidget()
+        center_layout = QVBoxLayout(center)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(0)
+        center_layout.addWidget(self.viewer, 1)
+        center_layout.addWidget(self.view_bar)
+        self.setCentralWidget(center)
 
         self.panel = AdjustmentPanel()
         self.panel.setEnabled(False)
@@ -146,60 +168,107 @@ class MainWindow(QMainWindow):
         self.renderer.failed.connect(lambda msg: self.statusBar().showMessage(f"Error: {msg}"))
 
         self._build_menus()
-        self.statusBar().showMessage("Archivo → Abrir (Ctrl+O) o arrastra una foto aquí")
+        self.statusBar().showMessage("Abre una foto (Ctrl+O) o arrástrala aquí")
 
     def _build_menus(self) -> None:
-        file_menu = self.menuBar().addMenu("&Archivo")
-        self._add_action(file_menu, "&Abrir…", QKeySequence.StandardKey.Open, self.choose_image)
-        self._add_action(file_menu, "Abrir &carpeta…", "Ctrl+Shift+O", self.choose_folder)
-        file_menu.addSeparator()
-        self._add_action(file_menu, "Foto a&nterior", "Ctrl+Left", lambda: self._step_photo(-1))
-        self._add_action(file_menu, "Foto si&guiente", "Ctrl+Right", lambda: self._step_photo(1))
-        file_menu.addSeparator()
-        self.export_action = self._add_action(file_menu, "&Exportar…", "Ctrl+E", self.export)
-        self.export_action.setEnabled(False)
-        self._add_action(file_menu, "Exportar &seleccionadas…", "Ctrl+Shift+E",
-                         lambda: self.export_batch(self.filmstrip.selected_paths()))
-        file_menu.addSeparator()
-        self._add_action(file_menu, "&Salir", QKeySequence.StandardKey.Quit, self.close)
-
-        edit_menu = self.menuBar().addMenu("&Editar")
-        self.undo_action = self._add_action(edit_menu, "&Deshacer", QKeySequence.StandardKey.Undo, self.undo)
-        self.redo_action = self._add_action(edit_menu, "&Rehacer", "Ctrl+Shift+Z", self.redo)
+        """Barra superior de iconos (sin menú de texto). Todas las acciones se
+        añaden también a la ventana, así sus atajos funcionan siempre."""
+        A = self._make_action
+        self.open_action = A("open", "Abrir foto", QKeySequence.StandardKey.Open, self.choose_image)
+        self.folder_action = A("folder", "Abrir carpeta", "Ctrl+Shift+O", self.choose_folder)
+        self.prev_action = A("prev", "Foto anterior", "Ctrl+Left", lambda: self._step_photo(-1))
+        self.next_action = A("next", "Foto siguiente", "Ctrl+Right", lambda: self._step_photo(1))
+        self.export_action = A("export", "Exportar", "Ctrl+E", self.export)
+        self.export_many_action = A("export_many", "Exportar seleccionadas", "Ctrl+Shift+E",
+                                    lambda: self.export_batch(self.filmstrip.selected_paths()))
+        self.undo_action = A("undo", "Deshacer", QKeySequence.StandardKey.Undo, self.undo)
+        self.redo_action = A("redo", "Rehacer", "Ctrl+Shift+Z", self.redo)
         self.redo_action.setShortcuts([QKeySequence("Ctrl+Shift+Z"), QKeySequence("Ctrl+Y")])
-        edit_menu.addSeparator()
-        self.copy_action = self._add_action(edit_menu, "&Copiar ajustes", "Ctrl+Shift+C", self.copy_look)
-        self.paste_action = self._add_action(edit_menu, "&Pegar ajustes", "Ctrl+Shift+V", self.paste_look)
-        self.copy_action.setEnabled(False)
-        self.paste_action.setEnabled(False)
-        edit_menu.addSeparator()
-        self._add_action(edit_menu, "R&establecer todos los ajustes", "Ctrl+R", self.reset_all)
-        edit_menu.addSeparator()
-        self.crop_action = self._add_action(edit_menu, "Re&cortar y enderezar", "C", self.toggle_crop)
+        self.copy_action = A("copy", "Copiar ajustes", "Ctrl+Shift+C", self.copy_look)
+        self.paste_action = A("paste", "Pegar ajustes", "Ctrl+Shift+V", self.paste_look)
+        self.reset_action = A("reset", "Restablecer todos los ajustes", "Ctrl+R", self.reset_all)
+        self.crop_action = A("crop", "Recortar y enderezar", "C", self.toggle_crop)
         self.crop_action.setCheckable(True)
+        self.fit_action = A("fit", "Ajustar a la ventana", "Ctrl+0", self.viewer.fit)
+        self.zoom_action = A("zoom100", "Tamaño real (100 %)", "Ctrl+1", self.viewer.zoom_100)
+        self.before_action = A(None, "Alternar antes / después", "\\", self.toggle_before)
+        self.quit_action = A(None, "Salir", QKeySequence.StandardKey.Quit, self.close)
+        for name, dock, text in (("presets", self.presets_dock, "Panel de presets"),
+                                 ("filmstrip", self.strip_dock, "Tira de la carpeta")):
+            toggle = dock.toggleViewAction()
+            toggle.setIcon(icon(name))
+            toggle.setText(text)
+            toggle.setToolTip(text)
+            setattr(self, f"{name}_toggle", toggle)
         # Intro / Esc del modo recorte: activas solo mientras se recorta.
-        self.crop_apply_action = self._add_action(self, "Aplicar recorte", "Return", self.apply_crop)
+        self.crop_apply_action = A(None, "Aplicar recorte", "Return", self.apply_crop)
         self.crop_apply_action.setShortcuts([QKeySequence("Return"), QKeySequence("Enter")])
-        self.crop_cancel_action = self._add_action(self, "Cancelar recorte", "Esc", self.cancel_crop)
-        for a in (self.crop_apply_action, self.crop_cancel_action):
+        self.crop_cancel_action = A(None, "Cancelar recorte", "Esc", self.cancel_crop)
+        for a in (self.crop_apply_action, self.crop_cancel_action, self.export_action,
+                  self.copy_action, self.paste_action, self.reset_action, self.crop_action):
             a.setEnabled(False)
+
+        bar = QToolBar("Principal", self)
+        bar.setObjectName("principal")
+        bar.setMovable(False)
+        bar.setIconSize(QSize(22, 22))
+        bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        groups = [
+            [self.open_action, self.folder_action],
+            [self.prev_action, self.next_action],
+            [self.export_action, self.export_many_action],
+            [self.undo_action, self.redo_action],
+            [self.copy_action, self.paste_action, self.reset_action],
+            [self.crop_action],
+        ]
+        for i, group in enumerate(groups):
+            if i:
+                bar.addSeparator()
+            for a in group:
+                bar.addAction(a)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        bar.addWidget(spacer)
+        for a in (self.fit_action, self.zoom_action):
+            bar.addAction(a)
+        bar.addSeparator()
+        bar.addAction(self.presets_toggle)
+        bar.addAction(self.filmstrip_toggle)
+        bar.addSeparator()
+
+        # Menú "≡" con todo (con texto), por si no se recuerda un icono.
+        menu = QMenu(self)
+        for group in groups + [[self.fit_action, self.zoom_action, self.before_action],
+                               [self.presets_toggle, self.filmstrip_toggle], [self.quit_action]]:
+            for a in group:
+                menu.addAction(a)
+            menu.addSeparator()
+        more = QToolButton()
+        more.setIcon(icon("menu"))
+        more.setToolTip("Todas las opciones")
+        more.setMenu(menu)
+        more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        bar.addWidget(more)
+
+        self.menuBar().hide()
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, bar)
+        # La barra de recorte aparece en una fila propia, debajo.
+        self.insertToolBar(self.crop_tools, bar)
+        self.removeToolBar(self.crop_tools)
+        self.addToolBarBreak(Qt.ToolBarArea.TopToolBarArea)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.crop_tools)
+        self.crop_tools.setVisible(False)
         self._update_history_actions()
 
-        view_menu = self.menuBar().addMenu("&Ver")
-        self.before_action = self._add_action(view_menu, "Antes / &Después", "\\", self.toggle_before)
-        self.before_action.setCheckable(True)
-        view_menu.addSeparator()
-        view_menu.addAction(self.presets_dock.toggleViewAction())
-        view_menu.addAction(self.strip_dock.toggleViewAction())
-        view_menu.addSeparator()
-        self._add_action(view_menu, "&Ajustar a la ventana", "Ctrl+0", self.viewer.fit)
-        self._add_action(view_menu, "Tamaño &real (100 %)", "Ctrl+1", self.viewer.zoom_100)
-
-    def _add_action(self, menu, text, shortcut, slot) -> QAction:
+    def _make_action(self, icon_name, text, shortcut, slot) -> QAction:
         action = QAction(text, self)
+        if icon_name:
+            action.setIcon(icon(icon_name))
         action.setShortcut(shortcut)
+        keys = action.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
+        action.setToolTip(f"{text}  ({keys})" if keys else text)
         action.triggered.connect(slot)
-        menu.addAction(action)  # menu puede ser la ventana: atajo sin entrada de menú
+        self.addAction(action)  # atajo activo aunque no haya menú visible
         return action
 
     # --- Abrir -----------------------------------------------------------
@@ -266,9 +335,12 @@ class MainWindow(QMainWindow):
         self.export_action.setEnabled(True)
         self.copy_action.setEnabled(True)
         self.paste_action.setEnabled(self.copied_look is not None)
+        self.reset_action.setEnabled(True)
+        self.crop_action.setEnabled(True)
+        self.view_bar.setEnabled(True)
         rgb = to_display_u8(self.base_preview)
-        self.before_rgb = rgb
-        self._set_before(False)
+        self._before_rgb, self._before_for = rgb, self.base_preview
+        self.set_view_mode("after")
         self._on_rendered(rgb, compute_histogram(rgb))
         self._request_render()
         self._update_preset_thumbs()
@@ -284,7 +356,7 @@ class MainWindow(QMainWindow):
 
     def _on_param_changed(self, key: str, value) -> None:
         self.settings[key] = value
-        self._set_before(False)  # al editar se vuelve a ver el resultado
+        self._leave_before()  # al editar se vuelve a ver el resultado
         self._history_timer.start()
         self._update_history_actions()
         # Botón del ratón pulsado = arrastrando un slider o un punto de la curva.
@@ -301,7 +373,7 @@ class MainWindow(QMainWindow):
         """Sustituye todos los ajustes (deshacer, restablecer, …)."""
         self.settings = settings.copy()
         self.panel.set_settings(self.settings)
-        self._set_before(False)
+        self._leave_before()
         self._request_render()
 
     # --- Historial ----------------------------------------------------------
@@ -397,8 +469,8 @@ class MainWindow(QMainWindow):
             return
         self._commit_history()
         self._crop_backup = self.settings.copy()
+        self.set_view_mode("after")
         self.crop_mode = True
-        self._set_before(False)
         self.panel.setEnabled(False)
         self.crop_action.setChecked(True)
         for a in (self.crop_apply_action, self.crop_cancel_action):
@@ -484,23 +556,44 @@ class MainWindow(QMainWindow):
         self._refresh_view()
 
     def toggle_before(self) -> None:
-        self._set_before(not self.show_before)
+        self.set_view_mode("after" if self.view_mode == "before" else "before")
 
-    def _set_before(self, on: bool) -> None:
-        on = on and self.before_rgb is not None
-        if on == self.show_before:
-            return
-        self.show_before = on
-        self.before_action.setChecked(on)
-        self.viewer.set_label("Antes" if on else "")
+    def _leave_before(self) -> None:
+        if self.view_mode == "before":
+            self.set_view_mode("after")
+
+    def set_view_mode(self, mode: str) -> None:
+        """"after" (resultado), "before" (original) o "compare" (dividido)."""
+        if self.crop_mode and mode != "after":
+            mode = "after"
+        self.view_mode = mode
+        self.view_bar.set_mode(mode)
+        self.viewer.set_label("Antes" if mode == "before" else "")
+        self.viewer.compare_divider.setVisible(mode == "compare")
         self._refresh_view()
 
+    def _before(self):
+        """La imagen de origen (con su recorte) sin ajustes, en sRGB."""
+        if self.preview is None:
+            return None
+        if self._before_for is not self.preview:
+            self._before_rgb, self._before_for = to_display_u8(self.preview), self.preview
+        return self._before_rgb
+
     def _refresh_view(self) -> None:
-        """Muestra la última imagen calculada (o la original en modo "Antes"),
-        con o sin el aviso de recorte."""
+        """Muestra el resultado, la original o ambas divididas, con o sin el
+        aviso de recorte."""
         if self.shown_rgb is None:
             return
-        rgb = self.before_rgb if self.show_before else self.shown_rgb
+        rgb = self.shown_rgb
+        before = self._before() if self.view_mode != "after" else None
+        if before is not None and before.shape == rgb.shape:
+            if self.view_mode == "before":
+                rgb = before
+            elif self.view_mode == "compare":
+                x = round(self.viewer.compare_divider.position * rgb.shape[1])
+                rgb = rgb.copy()
+                rgb[:, :x] = before[:, :x]
         if self.histogram.show_clipping:
             rgb = clipping_overlay(rgb)
         self.viewer.set_image(rgb)

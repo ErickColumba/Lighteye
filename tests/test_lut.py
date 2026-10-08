@@ -68,3 +68,26 @@ def test_lut_adjustment_amount_and_missing_file(tmp_path, rgb):
     assert np.ptp(half) < np.ptp(lin)
     with pytest.raises(ValueError):
         load_cube(tmp_path / "no-existe.cube")
+
+
+def test_builtin_luts_are_listed_and_load():
+    from app.core.lut import builtin_luts, display_name, resolve_path
+
+    luts = builtin_luts()
+    assert len(luts) >= 5
+    titles = [t for t, _ in luts]
+    assert "Cálido" in titles
+    for title, key in luts:
+        assert key.startswith("lighteye:")
+        assert resolve_path(key).is_file()
+        assert display_name(key) == title
+        assert load_cube(key).size == 17
+
+
+def test_builtin_lut_in_settings_and_pipeline(rgb):
+    from app.core.pipeline import process
+    from app.core.settings import Settings
+
+    s = Settings({"lut_path": "lighteye:blanco_negro_contraste.cube"})
+    out = process(rgb ** 2.2, s)
+    assert np.allclose(out[..., 0], out[..., 1], atol=1e-3)  # blanco y negro

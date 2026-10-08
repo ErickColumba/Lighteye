@@ -1,9 +1,15 @@
 """Visor de imagen con zoom (rueda del ratón) y desplazamiento (arrastrar)."""
 
 import numpy as np
-from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap
-from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import (
+    QGraphicsItem,
+    QGraphicsObject,
+    QGraphicsPixmapItem,
+    QGraphicsScene,
+    QGraphicsView,
+)
 
 from app.ui.crop_overlay import CropOverlay
 
@@ -18,6 +24,104 @@ def array_to_qimage(rgb_u8: np.ndarray) -> QImage:
     return QImage(rgb_u8.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
 
 
+class CompareDivider(QGraphicsObject):
+    """Línea vertical arrastrable del modo comparar (antes | después)."""
+
+    moved = Signal(float)
+    GRAB_PX = 10
+
+    def __init__(self):
+        super().__init__()
+        self.bounds = QRectF()
+        self.position = 0.5  # fracción del ancho
+        self._dragging = False
+        self.setZValue(5)
+        self.setAcceptHoverEvents(True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresParentOpacity)
+
+    def set_bounds(self, bounds: QRectF) -> None:
+        self.prepareGeometryChange()
+        self.bounds = QRectF(bounds)
+
+    def _scale(self) -> float:
+        views = self.scene().views() if self.scene() else []
+        return views[0].transform().m11() if views else 1.0
+
+    def _x(self) -> float:
+        return self.bounds.left() + self.position * self.bounds.width()
+
+    def boundingRect(self) -> QRectF:
+        return self.bounds.adjusted(-60, -10, 60, 10)
+
+    def paint(self, p: QPainter, option, widget=None):
+        if self.bounds.isEmpty():
+            return
+        k = 1 / self._scale()  # tamaños en píxeles de pantalla
+        x = self._x()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(QPen(QColor(0, 0, 0, 120), 4 * k))
+        p.drawLine(QPointF(x, self.bounds.top()), QPointF(x, self.bounds.bottom()))
+        p.setPen(QPen(QColor(255, 255, 255), 2 * k))
+        p.drawLine(QPointF(x, self.bounds.top()), QPointF(x, self.bounds.bottom()))
+        # Tirador redondo en el centro, con flechas.
+        c = QPointF(x, self.bounds.center().y())
+        p.setBrush(QColor(255, 255, 255))
+        p.setPen(QPen(QColor(0, 0, 0, 90), 1 * k))
+        p.drawEllipse(c, 14 * k, 14 * k)
+        p.setPen(QPen(QColor(40, 40, 40), 2 * k))
+        for d in (-1, 1):
+            tip = QPointF(x + d * 9 * k, c.y())
+            p.drawLine(tip, QPointF(x + d * 4 * k, c.y() - 5 * k))
+            p.drawLine(tip, QPointF(x + d * 4 * k, c.y() + 5 * k))
+        # Etiquetas arriba.
+        font = QFont(p.font())
+        font.setPointSizeF(10)
+        font.setBold(True)
+        p.setFont(font)
+        p.save()
+        p.translate(x, self.bounds.top())
+        p.scale(k, k)
+        for text, left in (("Antes", True), ("Después", False)):
+            w = p.fontMetrics().horizontalAdvance(text) + 16
+            box = QRectF(-w - 8 if left else 8, 8, w, 24)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(0, 0, 0, 160))
+            p.drawRoundedRect(box, 5, 5)
+            p.setPen(QColor(255, 255, 255))
+            p.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+        p.restore()
+
+    def _near(self, pos: QPointF) -> bool:
+        return abs(pos.x() - self._x()) <= self.GRAB_PX / self._scale()
+
+    def hoverMoveEvent(self, event):
+        if self._near(event.pos()):
+            self.setCursor(Qt.CursorShape.SplitHCursor)
+        else:
+            self.unsetCursor()
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton or not self._near(event.pos()):
+            event.ignore()  # lejos de la línea: el visor se desplaza
+            return
+        self._dragging = True
+
+    def mouseMoveEvent(self, event):
+        if not self._dragging or self.bounds.width() <= 0:
+            return
+        frac = min(1.0, max(0.0, (event.pos().x() - self.bounds.left()) / self.bounds.width()))
+        # Al redibujar la foto Qt reenvía un movimiento en la misma posición:
+        # si no se ignora, se entra en un bucle sin fin.
+        if abs(frac - self.position) < 1e-4:
+            return
+        self.position = frac
+        self.update()
+        self.moved.emit(self.position)
+
+    def mouseReleaseEvent(self, event):
+        self._dragging = False
+
+
 class ImageViewer(QGraphicsView):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -28,6 +132,9 @@ class ImageViewer(QGraphicsView):
         self.crop_overlay = CropOverlay()
         self.crop_overlay.setVisible(False)
         self._scene.addItem(self.crop_overlay)
+        self.compare_divider = CompareDivider()
+        self.compare_divider.setVisible(False)
+        self._scene.addItem(self.compare_divider)
         self.setScene(self._scene)
 
         self.setBackgroundBrush(QColor(30, 30, 30))
@@ -70,6 +177,7 @@ class ImageViewer(QGraphicsView):
     def set_image(self, rgb_u8: np.ndarray, reset_view: bool = False) -> None:
         """Muestra una imagen sRGB uint8. Conserva el zoom salvo reset_view."""
         self._item.setPixmap(QPixmap.fromImage(array_to_qimage(rgb_u8)))
+        self.compare_divider.set_bounds(self._item.boundingRect())
         # Margen alrededor para poder agarrar los tiradores del recorte en el borde.
         self._scene.setSceneRect(self._item.boundingRect().adjusted(-40, -40, 40, 40))
         if reset_view or self._fit_mode:
@@ -97,7 +205,7 @@ class ImageViewer(QGraphicsView):
         self.scale(factor, factor)
 
     def mouseDoubleClickEvent(self, event):
-        if not self.crop_overlay.isVisible():
+        if not self.crop_overlay.isVisible() and not self.compare_divider.isVisible():
             self.fit()
 
     def resizeEvent(self, event):
