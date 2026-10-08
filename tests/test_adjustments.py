@@ -196,3 +196,55 @@ def test_settings_normalize_curves():
     assert s["curves"]["r"] == IDENTITY_CURVE
     assert not s.is_default("curves")
     assert Settings({"curves": "basura"}) == Settings()
+
+
+# --- Intensidad y HSL -------------------------------------------------------
+
+from app.core.settings import HSL_KEYS  # noqa: E402
+
+
+def _sat(px):
+    return (px.max() - px.min()) / px.max()
+
+
+def test_vibrance_zero_is_identity(img):
+    assert np.allclose(adj.vibrance(img, 0), img, atol=1e-6)
+
+
+def test_vibrance_boosts_muted_colours_more_than_vivid_ones():
+    muted = np.array([[[0.30, 0.25, 0.22]]], np.float32)
+    vivid = np.array([[[0.05, 0.10, 0.80]]], np.float32)
+    gain_muted = _sat(adj.vibrance(muted, 80)[0, 0]) / _sat(muted[0, 0])
+    gain_vivid = _sat(adj.vibrance(vivid, 80)[0, 0]) / _sat(vivid[0, 0])
+    assert gain_muted > gain_vivid > 1.0 - 1e-6
+
+
+def test_vibrance_protects_skin_tones():
+    skin = np.array([[[0.60, 0.35, 0.25]]], np.float32)
+    grass = np.array([[[0.35, 0.60, 0.25]]], np.float32)  # misma saturación
+    assert _sat(adj.vibrance(skin, 100)[0, 0]) < _sat(adj.vibrance(grass, 100)[0, 0])
+
+
+def _hsl_values(**changes):
+    return [changes.get(k, 0.0) for k in HSL_KEYS]
+
+
+def test_hsl_zero_is_identity(img):
+    assert np.allclose(adj.hsl(img, *_hsl_values()), img, atol=2e-3)
+
+
+def test_hsl_blue_saturation_only_affects_blue():
+    blue = np.array([[[0.03, 0.03, 0.7]]], np.float32)  # tono 240°
+    red = np.array([[[0.7, 0.03, 0.02]]], np.float32)
+    v = _hsl_values(hsl_s_blue=-100)
+    out_blue = adj.hsl(blue, *v)[0, 0]
+    assert _sat(out_blue) < 0.05
+    assert np.allclose(adj.hsl(red, *v), red, atol=2e-3)
+
+
+def test_hsl_luminance_and_hue_shift():
+    blue = np.array([[[0.03, 0.03, 0.7]]], np.float32)  # tono 240°
+    darker = adj.hsl(blue, *_hsl_values(hsl_l_blue=-100))[0, 0]
+    assert luminance(darker) < luminance(blue[0, 0])
+    shifted = adj.hsl(blue, *_hsl_values(hsl_h_blue=100))[0, 0]
+    assert shifted[0] > blue[0, 0, 0] + 0.05  # hacia el morado: más rojo

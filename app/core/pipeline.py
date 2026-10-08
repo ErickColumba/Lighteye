@@ -7,7 +7,7 @@ Un paso se salta si todos sus ajustes están en el valor por defecto.
 import numpy as np
 
 from app.core import adjustments as adj
-from app.core.settings import Settings
+from app.core.settings import HSL_KEYS, Settings
 
 
 # (ajustes que usa el paso, función). Los valores se pasan en ese orden.
@@ -17,6 +17,8 @@ STEPS = [
     (("highlights", "shadows", "whites", "blacks"), adj.tones),
     (("contrast",), adj.contrast),
     (("curves",), adj.curves),
+    (tuple(HSL_KEYS), adj.hsl),
+    (("vibrance",), adj.vibrance),
     (("saturation",), adj.saturation),
 ]
 

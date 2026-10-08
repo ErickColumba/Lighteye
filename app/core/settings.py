@@ -34,7 +34,7 @@ def _toggle(key: str, label: str, group: str) -> Param:
 
 
 # Grupos en el orden en que aparecen en el panel.
-GROUPS = ["Luz", "Curvas", "Color", "Detalle", "Efectos"]
+GROUPS = ["Luz", "Curvas", "Color", "HSL", "Detalle", "Efectos"]
 
 PARAMS: list[Param] = [
     Param("exposure", "Exposición", "Luz", -4.0, 4.0, step=0.01),
@@ -45,7 +45,22 @@ PARAMS: list[Param] = [
     Param("blacks", "Negros", "Luz", -100, 100),
     Param("temperature", "Temperatura", "Color", -100, 100),
     Param("tint", "Tinte", "Color", -100, 100),
+    Param("vibrance", "Intensidad", "Color", -100, 100),
     Param("saturation", "Saturación", "Color", -100, 100),
+]
+
+# HSL por color: (clave, nombre, centro del rango de tono en grados).
+HSL_COLORS = [
+    ("red", "Rojo", 0), ("orange", "Naranja", 30), ("yellow", "Amarillo", 60),
+    ("green", "Verde", 120), ("aqua", "Aguamarina", 180), ("blue", "Azul", 240),
+    ("purple", "Morado", 270), ("magenta", "Magenta", 300),
+]
+HSL_KINDS = [("h", "Tono"), ("s", "Saturación"), ("l", "Luminancia")]
+HSL_KEYS = [f"hsl_{k}_{c}" for k, _ in HSL_KINDS for c, _, _ in HSL_COLORS]
+PARAMS += [
+    Param(f"hsl_{k}_{c}", name, "HSL", -100, 100, tab=tab)
+    for k, tab in HSL_KINDS
+    for c, name, _ in HSL_COLORS
 ]
 
 PARAMS_BY_KEY = {p.key: p for p in PARAMS}

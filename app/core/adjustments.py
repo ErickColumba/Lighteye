@@ -11,7 +11,17 @@ import cv2
 import numpy as np
 
 from app.core import curves as curve_math
-from app.core.color import LUMA, LUT_SIZE, linear_to_srgb, lut_domain, lut_index, srgb_to_linear
+from app.core.color import (
+    LUMA,
+    LUT_SIZE,
+    linear_to_srgb,
+    lut_domain,
+    lut_index,
+    srgb_to_linear,
+    to_linear_fast,
+    to_srgb_fast,
+)
+from app.core.settings import HSL_COLORS
 
 # Gris medio (18 %) en lineal: pivote para el contraste.
 MID_GREY = 0.18
@@ -145,3 +155,65 @@ def saturation(img: np.ndarray, amount: float) -> np.ndarray:
     matrix = (f * np.eye(3) + (1.0 - f) * LUMA[None, :]).astype(np.float32)
     out = cv2.transform(img, matrix)
     return np.maximum(out, 0.0, out=out)
+
+
+def vibrance(img: np.ndarray, amount: float) -> np.ndarray:
+    """Satura más los colores apagados y protege los tonos de piel."""
+    mx = img.max(axis=2)
+    mn = img.min(axis=2)
+    sat = (mx - mn) / (mx + 1e-6)
+
+    # Tonos de piel: rojo dominante, azul mínimo y tono entre ~10° y ~50°.
+    r, g, b = img[..., 0], img[..., 1], img[..., 2]
+    skin_hue = 60.0 * (g - b) / (r - b + 1e-6)
+    is_skin = (r >= g) & (g >= b) & (sat > 0.1)
+    skin = np.where(is_skin, np.clip(1.0 - np.abs(skin_hue - 28.0) / 22.0, 0.0, 1.0), 0.0)
+
+    weight = (1.0 - sat) * (1.0 - 0.7 * skin)
+    factor = (1.0 + amount / 100.0 * weight)[..., None].astype(np.float32)
+    lum = cv2.transform(img, LUMA[None, :])[..., None]
+    out = lum + (img - lum) * factor
+    return np.maximum(out, 0.0, out=out)
+
+
+HUE_BINS = 1440  # resolución de 0.25° para las tablas por tono
+MAX_HUE_SHIFT = 30.0  # grados con el slider a ±100
+
+
+@lru_cache(maxsize=4)
+def _hsl_luts(values: tuple) -> np.ndarray:
+    """(3, HUE_BINS): desplazamiento de tono, saturación y luminancia por tono.
+
+    Entre los centros de cada color se interpola linealmente, de forma
+    circular (después del magenta vuelve el rojo).
+    """
+    centers = np.array([c for _, _, c in HSL_COLORS] + [360.0])
+    hue = np.arange(HUE_BINS) * (360.0 / HUE_BINS)
+    n = len(HSL_COLORS)
+    luts = []
+    for kind in range(3):
+        v = np.array(values[kind * n:(kind + 1) * n], dtype=np.float64) / 100.0
+        luts.append(np.interp(hue, centers, np.append(v, v[0])))
+    return np.array(luts, dtype=np.float32)
+
+
+def hsl(img: np.ndarray, *values: float) -> np.ndarray:
+    """Tono, saturación y luminancia por rango de color (24 valores, −100 … +100).
+
+    Orden de los valores: los 8 tonos, las 8 saturaciones y las 8 luminancias
+    (ver settings.HSL_KEYS). Se trabaja en sRGB, que es como se perciben los
+    colores; lo que pasa de 1.0 se conserva aparte.
+    """
+    dh, ds, dl = _hsl_luts(tuple(values))
+    hls = cv2.cvtColor(to_srgb_fast(img), cv2.COLOR_RGB2HLS)
+    h, light, s = hls[..., 0], hls[..., 1], hls[..., 2]
+    idx = (h * (HUE_BINS / 360.0)).astype(np.int32) % HUE_BINS
+
+    # Los grises no tienen tono: el cambio de luminancia se pondera por la saturación.
+    hls[..., 0] = (h + dh[idx] * MAX_HUE_SHIFT) % 360.0
+    hls[..., 2] = np.clip(s * (1.0 + ds[idx]), 0.0, 1.0)
+    hls[..., 1] = np.clip(light * (1.0 + 0.5 * dl[idx] * s), 0.0, 1.0)
+
+    out = to_linear_fast(cv2.cvtColor(hls, cv2.COLOR_HLS2RGB))
+    out += np.maximum(img - 1.0, 0.0)
+    return out
