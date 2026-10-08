@@ -269,6 +269,8 @@ def clarity(img: np.ndarray, amount: float) -> np.ndarray:
     """Contraste local con radio grande, centrado en los medios tonos."""
     lum, y = _perceptual_luma(img)
     detail = y - fast_blur(y, _px(img, 25.0))
+    # Atenúa las diferencias grandes (bordes fuertes) para evitar halos.
+    detail /= 1.0 + 6.0 * np.abs(detail)
     midtones = np.clip(4.0 * y * (1.0 - y), 0.0, 1.0)
     return _apply_luma(img, lum, y + amount / 100.0 * 0.8 * detail * midtones)
 
@@ -279,13 +281,19 @@ def noise_reduction(img: np.ndarray, luma: float, color: float) -> np.ndarray:
     Luminancia: se separa el detalle fino (Y − blur) y se atenúan las
     variaciones pequeñas (ruido) conservando las grandes (bordes).
     Color: se desenfoca solo la crominancia, a la que el ojo es poco sensible.
+    El cambio se limita a una fracción de la luminancia: el ruido de color es
+    pequeño, y así los bordes de color reales no se "derraman".
     """
     out = img
     if color > 0:
         c = color / 100.0
         lum = cv2.transform(out, LUMA[None, :])[..., None]
-        chroma = fast_blur(out - lum, _px(img, 0.8 + 5.0 * c))
-        out = np.maximum(lum + chroma, 0.0)
+        chroma = out - lum
+        limit = (0.03 + 0.07 * c) * lum
+        change = np.clip(fast_blur(chroma, _px(img, 0.8 + 4.0 * c)) - chroma, -limit, limit)
+        # El recorte por canal puede alterar la luminancia: se le quita.
+        change -= cv2.transform(change, LUMA[None, :])[..., None]
+        out = np.maximum(out + change, 0.0)
     if luma > 0:
         a = luma / 100.0
         lum, y = _perceptual_luma(out)

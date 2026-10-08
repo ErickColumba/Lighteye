@@ -297,3 +297,13 @@ def test_color_noise_reduction_only_touches_chroma():
     chroma = lambda im: (im - luminance(im)[..., None]).std()
     assert chroma(out) < chroma(noisy) * 0.5
     assert np.allclose(luminance(out), luminance(noisy), atol=1e-4)
+
+
+def test_color_noise_reduction_does_not_bleed_strong_colour_edges():
+    x = np.zeros((64, 64, 3), np.float32)
+    x[:, :32] = [0.6, 0.02, 0.02]  # rojo
+    x[:, 32:] = [0.05, 0.3, 0.05]  # verde
+    out = adj.noise_reduction(x, 0, 100)
+    # Un desenfoque sin límite llevaría el rojo a ~0.25 junto al borde.
+    assert out[:, 34, 0].mean() < 0.1
+    assert np.allclose(out[:, 44:], x[:, 44:], atol=0.01)
