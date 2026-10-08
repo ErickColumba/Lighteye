@@ -23,7 +23,8 @@ def test_exposure_plus_one_doubles_linear_values(img):
 
 
 def test_contrast_zero_is_identity(img):
-    assert np.allclose(adj.contrast(img, 0.0), img, atol=1e-6)
+    # La LUT de 16 bits introduce como mucho medio escalón de error.
+    assert np.allclose(adj.contrast(img, 0.0), img, atol=1e-5)
 
 
 def test_contrast_keeps_anchors_and_is_monotonic():

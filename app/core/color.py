@@ -29,7 +29,27 @@ def luminance(img: np.ndarray) -> np.ndarray:
     return img @ LUMA
 
 
+# Las curvas 1D se aplican con tablas de 65536 entradas: cuantizar a 16 bits
+# e indexar es mucho más rápido que evaluar potencias píxel a píxel.
+LUT_SIZE = 65536
+
+
+def lut_index(img: np.ndarray) -> np.ndarray:
+    """Valores 0–1 (se recortan) -> índices uint16 para una LUT de LUT_SIZE."""
+    idx = np.clip(img, 0.0, 1.0)
+    idx *= LUT_SIZE - 1
+    idx += 0.5
+    return idx.astype(np.uint16)
+
+
+def lut_domain() -> np.ndarray:
+    """Valores de entrada (0–1) que corresponden a cada entrada de la LUT."""
+    return np.linspace(0.0, 1.0, LUT_SIZE, dtype=np.float32)
+
+
+_DISPLAY_LUT = (linear_to_srgb(lut_domain()) * 255.0 + 0.5).astype(np.uint8)
+
+
 def to_display_u8(img: np.ndarray) -> np.ndarray:
     """Imagen lineal float32 -> sRGB uint8 contigua, lista para QImage."""
-    out = linear_to_srgb(img) * 255.0 + 0.5
-    return np.ascontiguousarray(out.astype(np.uint8))
+    return np.ascontiguousarray(_DISPLAY_LUT[lut_index(img)])
