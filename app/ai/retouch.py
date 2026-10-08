@@ -29,6 +29,29 @@ def _saturate(img: np.ndarray, factor: float) -> np.ndarray:
     return np.maximum(lum + (img - lum) * factor, 0.0)
 
 
+SKIN_WORK_PX = 480  # el suavizado se calcula con la cara a este tamaño como máximo
+
+
+def _smooth_skin(srgb: np.ndarray, face_px: float, amount: float) -> np.ndarray:
+    """Filtro bilateral (alisa la piel respetando los bordes).
+
+    Su coste crece con el radio al cuadrado: en una cara de 2000 px tardaría
+    segundos. Se calcula sobre una versión reducida y se amplía; la textura
+    fina se recupera después de la original (ver apply_retouch).
+    """
+    scale = min(1.0, SKIN_WORK_PX / max(face_px, 1.0))
+    sigma_color = 0.05 + 0.08 * amount
+    if scale >= 1.0:
+        return cv2.bilateralFilter(srgb, d=0, sigmaColor=sigma_color,
+                                   sigmaSpace=max(1.0, face_px * 0.012))
+    h, w = srgb.shape[:2]
+    small = cv2.resize(srgb, (max(1, round(w * scale)), max(1, round(h * scale))),
+                       interpolation=cv2.INTER_AREA)
+    smooth = cv2.bilateralFilter(small, d=0, sigmaColor=sigma_color,
+                                 sigmaSpace=max(1.0, SKIN_WORK_PX * 0.012))
+    return cv2.resize(smooth, (w, h), interpolation=cv2.INTER_LINEAR)
+
+
 def apply_retouch(img: np.ndarray, parses: list[FaceParse], settings,
                   transform: np.ndarray | None = None) -> np.ndarray:
     """Aplica los retoques a `img` (lineal). `transform` (3×3): foto original → img."""
@@ -61,8 +84,7 @@ def apply_retouch(img: np.ndarray, parses: list[FaceParse], settings,
         if skin:
             mask = _mask(labels, bisenet.SKIN, feather * 2)
             srgb = linear_to_srgb(roi)
-            smooth = cv2.bilateralFilter(srgb, d=0, sigmaColor=0.05 + 0.08 * skin,
-                                         sigmaSpace=max(1.0, face_px * 0.012))
+            smooth = _smooth_skin(srgb, face_px, skin)
             smooth = smooth + (srgb - smooth) * 0.3  # conserva algo de textura (poros)
             roi = roi + (srgb_to_linear(smooth) - roi) * (mask * skin)
         if eyes:

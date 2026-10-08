@@ -33,17 +33,18 @@ _loaded: dict[str, object] = {}
 
 @lru_cache(maxsize=1)
 def torch_available() -> bool:
-    try:
-        import spandrel  # noqa: F401
-        import torch  # noqa: F401
-    except ImportError:
-        return False
-    return True
+    """¿Están instalados PyTorch y spandrel? Se comprueba sin importarlos:
+    cargar PyTorch cuesta ~1 s y cientos de MB, y solo hace falta al usar la IA."""
+    from importlib.util import find_spec
+
+    return find_spec("torch") is not None and find_spec("spandrel") is not None
 
 
 def device_name() -> str:
     if not torch_available():
         return "no disponible (falta PyTorch)"
+    if "torch" not in __import__("sys").modules:
+        return "GPU NVIDIA si hay memoria libre; si no, el procesador"
     import torch
 
     return torch.cuda.get_device_name(0) if torch.cuda.is_available() else "procesador (CPU)"

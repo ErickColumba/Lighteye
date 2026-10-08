@@ -83,6 +83,7 @@ class MainWindow(QMainWindow):
         self.preview = None  # imagen de origen que procesa el pipeline
         self._source_sig = None  # geometría con la que se calculó self.preview
         self._geo_preview = None  # vista previa con la geometría, sin rostros
+        self._source_version = 0  # cambia cada vez que cambia self.preview
         self._faces: dict[str, list] = {}  # rostros restaurados por clave de caché
         self._parses: dict = {}  # análisis facial (máscaras) por foto
         self._patches: dict[str, list] = {}  # zonas borradas (LaMa) por clave
@@ -390,6 +391,7 @@ class MainWindow(QMainWindow):
         self.loaded = loaded
         self.base_preview = make_preview(loaded.image)
         self.preview = self._geo_preview = self.base_preview
+        self._source_version += 1
         self._faces.clear()
         self._parses.clear()
         self._patches.clear()
@@ -571,6 +573,7 @@ class MainWindow(QMainWindow):
                     QApplication.restoreOverrideCursor()
             self._source_sig = sig
             self.preview = self._geo_preview
+            self._source_version += 1
 
     # --- Rostros (IA) -------------------------------------------------------------
 
@@ -622,7 +625,7 @@ class MainWindow(QMainWindow):
             out = paste_faces(out, faces, strength, transform) if faces else out
             return apply_retouch(out, parses, snapshot, transform) if parses else out
 
-        key = (id(self.preview), face_key if faces else None, strength if faces else 0,
+        key = (self._source_version, face_key if faces else None, strength if faces else 0,
                tuple(sorted(retouch.items())) if parses else None, self.crop_mode,
                erase_key if patches else None)
         return key, prepare

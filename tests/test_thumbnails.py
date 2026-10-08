@@ -46,3 +46,22 @@ def test_render_thumbnail_applies_sidecar(tmp_path):
     edited = th.render_thumbnail(photo, 120)
     assert edited.shape[:2] == (plain.shape[1], plain.shape[0])  # girada
     assert edited.mean() > plain.mean() + 20
+
+
+def test_original_size_is_remembered(tmp_path):
+    photo = _jpg(tmp_path / "s.jpg", 900, 600)
+    th.load_thumbnail(photo, 200)
+    assert th.original_size(photo, 200) == (900, 600)
+
+
+def test_thumbnail_uses_cached_background(tmp_path, monkeypatch):
+    from app.ai import background
+
+    photo = _jpg(tmp_path / "b.jpg", 400, 400, value=60)
+    mask = np.zeros((32, 32), np.float32)
+    mask[8:24, 8:24] = 1.0  # sujeto en el centro
+    monkeypatch.setattr(background, "load_cached", lambda path: mask)
+    th.load_thumbnail(photo, 200)
+    out = th.render_thumbnail(photo, 200, Settings({"bg_remove": 1, "bg_color": (1.0, 0.0, 0.0)}))
+    assert out[5, 5].tolist() == [255, 0, 0]  # fondo nuevo (rojo)
+    assert abs(int(out[100, 100, 0]) - 60) < 10  # sujeto intacto

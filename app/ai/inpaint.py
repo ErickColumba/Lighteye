@@ -140,12 +140,8 @@ def cache_key(photo: Path, strokes) -> str:
     return hashlib.sha1(raw.encode()).hexdigest()
 
 
-def patches_for(photo: Path, linear_full: np.ndarray, strokes, progress=None) -> list[Patch]:
-    """Zonas borradas de una foto: de la caché o calculándolas con LaMa."""
-    from app.core.color import to_srgb_fast
-
-    if not strokes:
-        return []
+def load_cached(photo: Path, strokes) -> list[Patch] | None:
+    """Zonas borradas guardadas en caché, o None si no se han calculado."""
     path = _cache_dir() / f"{cache_key(photo, strokes)}.npz"
     if path.is_file():
         try:
@@ -154,6 +150,19 @@ def patches_for(photo: Path, linear_full: np.ndarray, strokes, progress=None) ->
                           int(d[f"x{i}"]), int(d[f"y{i}"])) for i in range(int(d["count"]))]
         except (OSError, ValueError, KeyError):
             pass
+    return None
+
+
+def patches_for(photo: Path, linear_full: np.ndarray, strokes, progress=None) -> list[Patch]:
+    """Zonas borradas de una foto: de la caché o calculándolas con LaMa."""
+    from app.core.color import to_srgb_fast
+
+    if not strokes:
+        return []
+    cached = load_cached(photo, strokes)
+    if cached is not None:
+        return cached
+    path = _cache_dir() / f"{cache_key(photo, strokes)}.npz"
     patches = erase(to_srgb_fast(linear_full), strokes, progress)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)

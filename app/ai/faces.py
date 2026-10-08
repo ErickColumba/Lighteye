@@ -152,6 +152,7 @@ def _cache_dir() -> Path:
 
 def cache_key(photo: Path, use_codeformer: bool, fidelity: float) -> str:
     st = Path(photo).stat()
+    fidelity = round(fidelity * 20) / 20  # pasos de 0.05: menos cálculos al mover el slider
     model = f"codeformer{fidelity:.2f}" if use_codeformer else "gfpgan14"
     raw = f"{Path(photo).resolve()}|{st.st_mtime_ns}|{st.st_size}|{model}"
     return hashlib.sha1(raw.encode()).hexdigest()
@@ -188,6 +189,7 @@ def faces_for(photo: Path, linear_full: np.ndarray, use_codeformer: bool, fideli
     """Caras restauradas de una foto: de la caché o calculándolas (lento)."""
     from app.core.color import to_srgb_fast
 
+    fidelity = round(fidelity * 20) / 20  # igual que en cache_key
     key = cache_key(photo, use_codeformer, fidelity)
     cached = load_cached(key)
     if cached is not None:
@@ -241,10 +243,8 @@ def parse_cache_key(photo: Path) -> str:
     return hashlib.sha1(raw.encode()).hexdigest()
 
 
-def parses_for(photo: Path, linear_full: np.ndarray, progress=None) -> list[FaceParse]:
-    """Análisis facial de una foto: de la caché o calculándolo."""
-    from app.core.color import to_srgb_fast
-
+def load_parses_cached(photo: Path) -> list[FaceParse] | None:
+    """Análisis facial guardado en caché, o None si no se ha calculado."""
     path = _cache_dir() / f"parse-{parse_cache_key(photo)}.npz"
     if path.is_file():
         try:
@@ -252,6 +252,17 @@ def parses_for(photo: Path, linear_full: np.ndarray, progress=None) -> list[Face
             return [FaceParse(data[f"labels{i}"], data[f"matrix{i}"]) for i in range(int(data["count"]))]
         except (OSError, ValueError, KeyError):
             pass
+    return None
+
+
+def parses_for(photo: Path, linear_full: np.ndarray, progress=None) -> list[FaceParse]:
+    """Análisis facial de una foto: de la caché o calculándolo."""
+    from app.core.color import to_srgb_fast
+
+    cached = load_parses_cached(photo)
+    if cached is not None:
+        return cached
+    path = _cache_dir() / f"parse-{parse_cache_key(photo)}.npz"
     parses = parse_faces(to_srgb_fast(linear_full), progress)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
