@@ -62,8 +62,12 @@ def to_output_bits(linear: np.ndarray, bits: int) -> np.ndarray:
     return to_display_u8(linear)
 
 
-def encode(rgb: np.ndarray, options: ExportOptions) -> bytes:
-    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+def encode(rgb: np.ndarray, options: ExportOptions, alpha: np.ndarray | None = None) -> bytes:
+    """RGB (y alfa opcional, del mismo tipo entero) → bytes del archivo."""
+    if alpha is not None:
+        bgr = cv2.cvtColor(np.dstack([rgb, alpha]), cv2.COLOR_RGBA2BGRA)
+    else:
+        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
     params = []
     if options.fmt == "jpeg":
         params = [cv2.IMWRITE_JPEG_QUALITY, int(options.quality),
@@ -189,12 +193,43 @@ def export_image(src: Path, image: np.ndarray, settings: Settings, out_path: Pat
 
         patches = patches_for(Path(src), image, list(settings["erase_strokes"]))
     linear = render_full(image, settings, step, faces, parses, patches)
+
+    # Máscara del sujeto (quitar fondo), al tamaño del resultado de la geometría.
+    alpha = None
+    if settings["bg_remove"]:
+        from app.ai import background as bg
+        from app.core.geometry import geometry_matrix
+
+        h, w = image.shape[:2]
+        mask = bg.alpha_for(Path(src), image)
+        alpha = bg.adjust_edge(
+            bg.warp_alpha(mask, w, h, geometry_matrix(w, h, settings), linear.shape[1], linear.shape[0]),
+            settings["bg_edge"] / 100)
+
     if upscaling:
         linear = ai_upscale(linear, options.ai_scale,
                             lambda f: progress(share + 0.5 * f) if progress else None)
     linear = resize_long_side(linear, options.long_side)
+    if alpha is not None and alpha.shape != linear.shape[:2]:
+        alpha = cv2.resize(alpha, linear.shape[1::-1], interpolation=cv2.INTER_LINEAR)
+
+    out_alpha = None
+    if alpha is not None:
+        from app.ai.background import composite
+        from app.core.color import srgb_to_linear
+
+        color = settings["bg_color"]
+        if color is None and options.fmt != "jpeg":
+            out_alpha = alpha  # transparente: se guarda como canal alfa
+        else:
+            # Color elegido, o blanco en JPG (no admite transparencia).
+            fill = srgb_to_linear(np.array(color if color is not None else (1.0, 1.0, 1.0), np.float32))
+            linear = composite(linear, alpha, fill)
     rgb = to_output_bits(linear, options.bits)
-    data = encode(rgb, options)
+    if out_alpha is not None:
+        top = 65535 if options.bits == 16 else 255
+        out_alpha = (np.clip(out_alpha, 0, 1) * top + 0.5).astype(rgb.dtype)
+    data = encode(rgb, options, out_alpha)
 
     exif = build_exif(src, rgb.shape[1], rgb.shape[0])
     if exif:

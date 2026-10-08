@@ -49,7 +49,7 @@ def device_name() -> str:
 
 # Memoria de vídeo libre necesaria (aprox.) para usar la GPU con cada modelo.
 VRAM_NEEDED_MB = {"realesrgan_x4": 1200, "realesrgan_x2": 1200, "gfpgan": 1500,
-                  "codeformer": 1500, "bisenet": 600, "lama": 2500}
+                  "codeformer": 1500, "bisenet": 600, "lama": 2500, "birefnet": 3500}
 
 
 def pick_device(key: str) -> str:

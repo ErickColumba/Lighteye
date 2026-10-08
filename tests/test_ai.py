@@ -221,3 +221,56 @@ def test_erase_fills_a_hole_with_surroundings():
     filled = p.image[128 - p.y0, 128 - p.x0]
     assert abs(filled[0] - 0.5) < 0.15 and abs(filled[1] - 0.5) < 0.15  # sigue el degradado
     assert filled[2] < 0.6  # el magenta ha desaparecido
+
+
+# --- Quitar el fondo --------------------------------------------------------------
+
+def test_background_helpers():
+    from app.ai import background as bg
+
+    alpha = np.zeros((64, 64), np.float32)
+    alpha[16:48, 16:48] = 1.0
+    out = bg.warp_alpha(alpha, 200, 100, None, 200, 100)  # cuadrada → foto 200×100
+    assert out.shape == (100, 200)
+    assert out[50, 100] == 1.0 and out[5, 5] == 0.0
+    half = bg.warp_alpha(alpha, 200, 100, np.diag([0.5, 0.5, 1.0]), 100, 50)
+    assert half[25, 50] == 1.0
+    soft = np.linspace(0, 1, 11, dtype=np.float32)
+    assert bg.adjust_edge(soft, 0.5)[3] > soft[3]  # agrandar
+    assert bg.adjust_edge(soft, -0.5)[7] < soft[7]  # encoger
+    rgb = np.full((2, 2, 3), 0.8, np.float32)
+    a = np.array([[1, 0], [0.5, 0]], np.float32)
+    comp = bg.composite(rgb, a, (0.0, 0.0, 1.0))
+    assert np.allclose(comp[0, 0], 0.8) and np.allclose(comp[0, 1], (0, 0, 1))
+    assert np.allclose(comp[1, 0], (0.4, 0.4, 0.9))
+    board = bg.checkerboard(24, 24, 12)
+    assert board[0, 0].tolist() != board[0, 12].tolist()
+
+
+def test_export_with_transparent_or_color_background(tmp_path, monkeypatch):
+    import cv2
+
+    from app.ai import background as bg
+    from app.core.exporter import ExportOptions, export_image
+    from app.core.loader import load_image
+    from app.core.settings import Settings
+
+    src = tmp_path / "a.png"
+    cv2.imencode(".png", np.full((60, 80, 3), 128, np.uint8))[1].tofile(src)
+    mask = np.zeros((32, 32), np.float32)
+    mask[8:24, 8:24] = 1.0  # sujeto en el centro
+    monkeypatch.setattr(bg, "alpha_for", lambda photo, linear: mask)
+    image = load_image(src).image
+
+    out = export_image(src, image, Settings({"bg_remove": 1}), tmp_path / "t.png", ExportOptions("png8"))
+    rgba = cv2.imread(str(out), cv2.IMREAD_UNCHANGED)
+    assert rgba.shape == (60, 80, 4) and rgba[30, 40, 3] == 255 and rgba[2, 2, 3] == 0
+
+    out = export_image(src, image, Settings({"bg_remove": 1, "bg_color": (1, 0, 0)}),
+                       tmp_path / "c.jpg", ExportOptions("jpeg"))
+    bgr = cv2.imread(str(out))
+    assert bgr[2, 2, 2] > 230 and bgr[2, 2, 0] < 30  # fondo rojo
+    assert abs(int(bgr[30, 40, 1]) - 128) < 10  # el sujeto no cambia
+
+    out = export_image(src, image, Settings({"bg_remove": 1}), tmp_path / "w.jpg", ExportOptions("jpeg"))
+    assert cv2.imread(str(out))[2, 2].min() > 240  # JPG transparente → blanco

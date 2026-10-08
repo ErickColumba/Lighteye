@@ -212,6 +212,60 @@ class LutPicker(QWidget):
         self.changed.emit(path)
 
 
+class BackgroundPicker(QWidget):
+    """Fondo cuando se quita: transparente o un color."""
+
+    changed = Signal(object)  # None (transparente) o (r, g, b) en 0–1
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QToolButton
+
+        self.mode = QComboBox()
+        self.mode.addItems(["Transparente", "Color"])
+        self.color_button = QToolButton()
+        self.color_button.setToolTip("Elegir el color del fondo")
+        self.color_button.setFixedWidth(48)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 2, 0, 4)
+        label = QLabel("Fondo nuevo")
+        layout.addWidget(label)
+        layout.addWidget(self.mode, 1)
+        layout.addWidget(self.color_button)
+        self._color = (1.0, 1.0, 1.0)
+        self.mode.activated.connect(lambda _: self._emit())
+        self.color_button.clicked.connect(self._choose)
+        self.set_color(None)
+
+    def _paint_button(self) -> None:
+        r, g, b = (round(c * 255) for c in self._color)
+        self.color_button.setStyleSheet(f"background: rgb({r},{g},{b}); border: 1px solid #888;"
+                                        "border-radius: 3px; min-height: 18px;")
+
+    def set_color(self, color) -> None:
+        self.mode.setCurrentIndex(0 if color is None else 1)
+        if color is not None:
+            self._color = tuple(color)
+        self._paint_button()
+        self.color_button.setEnabled(color is not None)
+
+    def _choose(self) -> None:
+        from PySide6.QtGui import QColor
+        from PySide6.QtWidgets import QColorDialog
+
+        current = QColor.fromRgbF(*self._color)
+        chosen = QColorDialog.getColor(current, self, "Color del fondo")
+        if chosen.isValid():
+            self._color = (chosen.redF(), chosen.greenF(), chosen.blueF())
+            self.mode.setCurrentIndex(1)
+            self._emit()
+
+    def _emit(self) -> None:
+        color = None if self.mode.currentIndex() == 0 else self._color
+        self.set_color(color)
+        self.changed.emit(color)
+
+
 def new_grid() -> QGridLayout:
     grid = QGridLayout()
     grid.setContentsMargins(0, 0, 0, 0)
@@ -250,6 +304,10 @@ class AdjustmentPanel(QScrollArea):
         self.lut_picker.changed.connect(lambda path: self.changed.emit("lut_path", path))
         self._add_custom("LUT", self.lut_picker, top=True)
 
+        self.background_picker = BackgroundPicker()
+        self.background_picker.changed.connect(lambda c: self.changed.emit("bg_color", c))
+        self._add_custom("Fondo (IA)", self.background_picker)
+
         self._check_ai()
 
         layout.addStretch(1)
@@ -260,7 +318,8 @@ class AdjustmentPanel(QScrollArea):
         from app.ai import runtime
 
         for group, models in (("Rostros (IA)", ("gfpgan", "yunet")),
-                              ("Retoque (IA)", ("bisenet", "yunet"))):
+                              ("Retoque (IA)", ("bisenet", "yunet")),
+                              ("Fondo (IA)", ("birefnet",))):
             section = self.sections[group]
             if all(runtime.model_available(m) for m in models):
                 section.toggle.setToolTip(f"Se calcula con: {runtime.device_name()}")
@@ -302,3 +361,4 @@ class AdjustmentPanel(QScrollArea):
             row.set_value(settings[key])
         self.curve_editor.set_curves(settings["curves"])
         self.lut_picker.set_path(settings["lut_path"])
+        self.background_picker.set_color(settings["bg_color"])

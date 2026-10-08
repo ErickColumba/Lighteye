@@ -30,7 +30,7 @@ class Param:
 
 
 # Grupos en el orden en que aparecen en el panel.
-GROUPS = ["Rostros (IA)", "Retoque (IA)", "Luz", "Curvas", "Color", "HSL", "LUT", "Detalle", "Efectos"]
+GROUPS = ["Rostros (IA)", "Retoque (IA)", "Fondo (IA)", "Luz", "Curvas", "Color", "HSL", "LUT", "Detalle", "Efectos"]
 
 PARAMS: list[Param] = [
     Param("exposure", "Exposición", "Luz", -4.0, 4.0, step=0.01),
@@ -98,6 +98,13 @@ FACE_KEYS = ("face_restore", "face_codeformer", "face_fidelity",
              "skin_smooth", "eyes_brighten", "lips_saturation", "hair_shine")
 RETOUCH_KEYS = ("skin_smooth", "eyes_brighten", "lips_saturation", "hair_shine")
 
+# Quitar el fondo: se compone al final, después de todos los ajustes.
+PARAMS += [
+    Param("bg_remove", "Quitar el fondo", "Fondo (IA)", 0, 1, kind="toggle"),
+    Param("bg_edge", "Ajustar borde", "Fondo (IA)", -100, 100),
+]
+BACKGROUND_KEYS = ("bg_remove", "bg_edge", "bg_color")
+
 # HSL por color: (clave, nombre, centro del rango de tono en grados).
 HSL_COLORS = [
     ("red", "Rojo", 0), ("orange", "Naranja", 30), ("yellow", "Amarillo", 60),
@@ -125,6 +132,8 @@ EXTRA_DEFAULTS: dict = {
     # Trazos de «Borrar objetos»: [{"r": radio, "pts": [[x, y], …]}] en 0–1
     # respecto a la foto original (ver app/ai/inpaint.py).
     "erase_strokes": (),
+    # Fondo cuando se quita: None = transparente, (r, g, b) sRGB 0–1 = color.
+    "bg_color": None,
 }
 
 
@@ -207,6 +216,11 @@ def _normalize_extra(key: str, value):
         return {ch: normalize_curve(value.get(ch, IDENTITY_CURVE)) for ch in CURVE_CHANNELS}
     if key == "lut_path":
         return str(value) if value else None
+    if key == "bg_color":
+        if value is None:
+            return None
+        r, g, b = (min(1.0, max(0.0, float(v))) for v in value)
+        return (r, g, b)
     if key == "erase_strokes":
         strokes = []
         for stroke in value:

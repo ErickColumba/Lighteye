@@ -53,6 +53,9 @@ MODELS = {m.key: m for m in [
     ModelInfo("lama", "big-lama.pt",
               "https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt",
               205, "Apache-2.0", "Borrar objetos"),
+    ModelInfo("birefnet", "BiRefNet.safetensors",
+              "https://huggingface.co/ZhengPeng7/BiRefNet/resolve/main/model.safetensors",
+              445, "MIT", "Quitar el fondo"),
     ModelInfo("yunet", "face_detection_yunet_2023mar.onnx",
               "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/"
               "face_detection_yunet_2023mar.onnx",

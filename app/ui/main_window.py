@@ -80,6 +80,8 @@ class MainWindow(QMainWindow):
         self._face_worker = None
         self._parse_worker = None
         self._erase_worker = None
+        self._alphas: dict = {}  # máscara del sujeto por foto (quitar fondo)
+        self._bg_worker = None
         self.erase_mode = False
         self.crop_mode = False
         self._crop_backup: Settings | None = None
@@ -357,6 +359,7 @@ class MainWindow(QMainWindow):
         self._faces.clear()
         self._parses.clear()
         self._patches.clear()
+        self._alphas.clear()
         self._source_sig = geometry_signature(Settings())
         # Si la foto ya se había editado, se recuperan sus ajustes.
         self.settings = load_sidecar(loaded.path) or Settings()
@@ -471,7 +474,8 @@ class MainWindow(QMainWindow):
             if not draft:
                 self._settle_timer.stop()
             self._sync_source()
-            self.renderer.request(self.preview, self.settings, draft=draft, prep=self._source_prep())
+            self.renderer.request(self.preview, self.settings, draft=draft, prep=self._source_prep(),
+                                  post=self._background_post())
 
     def _sync_source(self) -> None:
         """Recalcula la imagen de origen si cambió la geometría.
@@ -564,6 +568,71 @@ class MainWindow(QMainWindow):
         fw, fh = final_size(w, h, shown)
         ph, pw = self.preview.shape[:2]
         return np.diag([pw / fw, ph / fh, 1.0]) @ geo
+
+    # --- Quitar el fondo (BiRefNet) -------------------------------------------------
+
+    def _background_post(self):
+        """Función que pone el fondo nuevo sobre la imagen ya calculada (en el
+        hilo de trabajo), o None si no se quita el fondo."""
+        if self.loaded is None or not self.settings["bg_remove"] or self.crop_mode:
+            return None
+        mask = self._alphas.get(self.loaded.path)
+        if mask is None:
+            self._request_background()
+            return None
+        from app.ai import background as bg
+
+        h, w = self.loaded.image.shape[:2]
+        transform = self._preview_transform()
+        edge = self.settings["bg_edge"] / 100
+        color = self.settings["bg_color"]
+
+        def post(rgb):
+            ph, pw = rgb.shape[:2]
+            alpha = bg.adjust_edge(bg.warp_alpha(mask, w, h, transform, pw, ph), edge)
+            if color is None:
+                backdrop = bg.checkerboard(ph, pw)  # transparente
+            else:
+                backdrop = np.array(color, np.float32) * 255
+            out = bg.composite(rgb.astype(np.float32), alpha, backdrop)
+            return np.ascontiguousarray(np.clip(out + 0.5, 0, 255).astype(np.uint8))
+
+        return post
+
+    def _request_background(self) -> None:
+        if self._bg_worker is not None or self.loaded is None:
+            return
+        from app.ai import background as bg
+        from app.ai import runtime
+        from app.ui.ai_worker import BackgroundWorker
+
+        cached = bg.load_cached(self.loaded.path)
+        if cached is not None:
+            self._alphas[self.loaded.path] = cached
+            self._request_render()
+            return
+        if not runtime.model_available("birefnet"):
+            self.statusBar().showMessage("Quitar el fondo no disponible: faltan PyTorch o el modelo "
+                                         "(python tools/download_models.py birefnet)", 8000)
+            return
+        worker = BackgroundWorker(self.loaded.path, self.loaded.image, self)
+        worker.done.connect(self._background_ready)
+        worker.failed.connect(lambda msg: (self.statusBar().showMessage(f"Error al quitar el fondo: {msg}",
+                                                                        8000), self._clear_bg_worker()))
+        self._bg_worker = worker
+        self.statusBar().showMessage(f"Separando el sujeto del fondo con IA… ({runtime.device_name()})")
+        worker.start()
+
+    def _clear_bg_worker(self) -> None:
+        if self._bg_worker is not None:
+            self._bg_worker.deleteLater()
+        self._bg_worker = None
+
+    def _background_ready(self, path: str, alpha) -> None:
+        self._alphas[Path(path)] = alpha
+        self._clear_bg_worker()
+        self.statusBar().showMessage("Fondo quitado. Elige transparente o un color en «Fondo (IA)»", 5000)
+        self._request_render()
 
     # --- Borrar objetos (LaMa) ------------------------------------------------------
 
@@ -1085,7 +1154,11 @@ class MainWindow(QMainWindow):
             self._export_worker = None
             worker.deleteLater()
             if ok:
-                self.statusBar().showMessage(f"Exportada: {message}", 8000)
+                note = ""
+                if (options.fmt == "jpeg" and self.settings["bg_remove"]
+                        and self.settings["bg_color"] is None):
+                    note = "  ·  JPG no admite transparencia: se usó fondo blanco (usa PNG para transparente)"
+                self.statusBar().showMessage(f"Exportada: {message}{note}", 10000)
             elif message:
                 QMessageBox.warning(self, "Lighteye", f"No se pudo exportar:\n{message}")
             else:
@@ -1098,7 +1171,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._commit_history()
-        for w in (self._face_worker, self._parse_worker, self._erase_worker):
+        for w in (self._face_worker, self._parse_worker, self._erase_worker, self._bg_worker):
             if w is not None:
                 w.wait()
         worker = self._export_worker

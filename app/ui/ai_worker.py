@@ -6,6 +6,27 @@ import numpy as np
 from PySide6.QtCore import QThread, Signal
 
 
+class BackgroundWorker(QThread):
+    """Máscara del sujeto (quitar fondo) con BiRefNet, con caché."""
+
+    done = Signal(str, object)  # ruta de la foto, máscara
+    failed = Signal(str)
+
+    def __init__(self, photo: Path, linear: np.ndarray, parent=None):
+        super().__init__(parent)
+        self.photo, self.linear = photo, linear
+
+    def run(self) -> None:
+        from app.ai.background import alpha_for
+
+        try:
+            alpha = alpha_for(self.photo, self.linear)
+        except Exception as exc:  # noqa: BLE001
+            self.failed.emit(str(exc) or exc.__class__.__name__)
+        else:
+            self.done.emit(str(self.photo), alpha)
+
+
 class EraseWorker(QThread):
     """Rellena con LaMa las zonas pintadas con «Borrar objetos» (con caché)."""
 
