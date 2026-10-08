@@ -1,6 +1,7 @@
 {
   "lighteye_preset": 1,
   "name": "Retrato · Natural",
+  "category": "ajustes",
   "settings": {
     "contrast": 12.0,
     "highlights": -12.0,

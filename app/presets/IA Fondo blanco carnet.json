@@ -1,0 +1,19 @@
+{
+  "lighteye_preset": 1,
+  "name": "IA · Fondo blanco (carnet)",
+  "category": "ia",
+  "settings": {
+    "exposure": 0.1,
+    "whites": 15.0,
+    "blacks": -10.0,
+    "vibrance": 8.0,
+    "skin_smooth": 25.0,
+    "eyes_brighten": 20.0,
+    "bg_remove": 1.0,
+    "bg_color": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  }
+}

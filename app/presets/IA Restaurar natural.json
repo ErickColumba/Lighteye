@@ -1,0 +1,13 @@
+{
+  "lighteye_preset": 1,
+  "name": "IA · Restaurar natural",
+  "category": "ia",
+  "settings": {
+    "whites": 20.0,
+    "blacks": -15.0,
+    "vibrance": 12.0,
+    "face_restore": 70.0,
+    "skin_smooth": 15.0,
+    "eyes_brighten": 15.0
+  }
+}

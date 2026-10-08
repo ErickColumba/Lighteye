@@ -1,6 +1,7 @@
 {
   "lighteye_preset": 1,
   "name": "Estudio · Clave alta",
+  "category": "ajustes",
   "settings": {
     "exposure": 0.45,
     "contrast": -8.0,

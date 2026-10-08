@@ -1,6 +1,7 @@
 {
   "lighteye_preset": 1,
   "name": "Estudio · Clave baja",
+  "category": "ajustes",
   "settings": {
     "exposure": -0.3,
     "contrast": 30.0,

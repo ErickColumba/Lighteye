@@ -77,3 +77,20 @@ def test_none_preset_clears_look_but_keeps_crop():
     result = apply_look(photo, NONE_PRESET.values)
     assert look_values(result) == {}
     assert result["angle"] == 2 and result["crop"] == (0.1, 0.1, 0.5, 0.5)
+
+
+def test_categories():
+    from app.core.presets import category_of
+
+    assert category_of({"exposure": 1}) == "ajustes"
+    assert category_of({"exposure": 1, "skin_smooth": 30}) == "ia"
+    assert category_of({"bg_remove": 1.0}) == "ia"
+    builtin = [p for p in list_presets() if p.builtin]
+    assert sum(p.category == "ia" for p in builtin) >= 10
+    assert all(p.name.startswith("IA · ") for p in builtin if p.category == "ia")
+
+
+def test_saved_ai_preset_goes_to_ia_tab(tmp_path):
+    p = save_preset("Mi retoque", Settings({"skin_smooth": 50, "exposure": 0.2}), tmp_path)
+    assert p.category == "ia"
+    assert list_presets(tmp_path)[0].category == "ia"

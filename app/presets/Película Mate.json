@@ -1,6 +1,7 @@
 {
   "lighteye_preset": 1,
   "name": "Película · Mate",
+  "category": "ajustes",
   "settings": {
     "contrast": 5.0,
     "temperature": 4.0,

@@ -1,0 +1,12 @@
+{
+  "lighteye_preset": 1,
+  "name": "IA · Restaurar fiel (CodeFormer)",
+  "category": "ia",
+  "settings": {
+    "whites": 15.0,
+    "blacks": -12.0,
+    "face_restore": 80.0,
+    "face_codeformer": 1.0,
+    "face_fidelity": 80.0
+  }
+}

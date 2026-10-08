@@ -1,6 +1,7 @@
 {
   "lighteye_preset": 1,
   "name": "Editorial · Frío",
+  "category": "ajustes",
   "settings": {
     "contrast": 18.0,
     "highlights": -20.0,

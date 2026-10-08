@@ -1,13 +1,20 @@
-"""Lista de presets con miniatura de cómo queda la foto actual con cada uno."""
+"""Lista de presets con miniatura de cómo queda la foto actual con cada uno.
+
+Dos pestañas: «Ajustes» (luz, color, efectos) e «IA» (usan restaurar rostros,
+retoque con máscaras o quitar el fondo). Las miniaturas de la pestaña IA
+muestran solo la parte de ajustes, con una marca «IA» (la parte de IA se
+calcula al aplicar el preset).
+"""
 
 import numpy as np
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -21,6 +28,24 @@ from app.ui.viewer import array_to_qimage
 THUMB_SIZE = QSize(112, 76)
 
 
+def _ai_badge(pix: QPixmap) -> QPixmap:
+    """Marca «IA» en la esquina de la miniatura."""
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    font = QFont(p.font())
+    font.setPixelSize(11)
+    font.setBold(True)
+    p.setFont(font)
+    w = p.fontMetrics().horizontalAdvance("IA") + 10
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(37, 99, 235, 235))
+    p.drawRoundedRect(pix.width() - w - 4, 4, w, 16, 4, 4)
+    p.setPen(QColor(255, 255, 255))
+    p.drawText(pix.width() - w - 4, 4, w, 16, Qt.AlignmentFlag.AlignCenter, "IA")
+    p.end()
+    return pix
+
+
 class PresetPanel(QWidget):
     apply_requested = Signal(object)  # Preset
     save_requested = Signal()
@@ -28,12 +53,23 @@ class PresetPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.list = QListWidget()
-        self.list.setIconSize(THUMB_SIZE)
-        self.list.setSpacing(2)
-        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.list.setWordWrap(True)
-        self.list.setToolTip("Clic para aplicar el preset a la foto")
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.lists: dict[str, QListWidget] = {}
+        for category, title in (("ajustes", "Ajustes"), ("ia", "IA")):
+            lst = QListWidget()
+            lst.setIconSize(THUMB_SIZE)
+            lst.setSpacing(2)
+            lst.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            lst.setWordWrap(True)
+            lst.setToolTip("Clic para aplicar el preset a la foto")
+            lst.itemClicked.connect(self._clicked)
+            lst.currentItemChanged.connect(lambda cur, _: self._update_delete(cur))
+            self.lists[category] = lst
+            self.tabs.addTab(lst, title)
+        self.tabs.setTabToolTip(1, "Presets que usan IA: restaurar rostros, retoque de piel, ojos, "
+                                   "labios y pelo, y quitar el fondo")
+        self.tabs.currentChanged.connect(lambda _: self._update_delete(self.list.currentItem()))
         save = QPushButton("Guardar actual…")
         save.setToolTip("Guarda los ajustes actuales (sin recorte ni giros) como preset")
         self.delete = QPushButton("Eliminar")
@@ -43,11 +79,9 @@ class PresetPanel(QWidget):
         buttons.addWidget(self.delete)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
-        layout.addWidget(self.list, 1)
+        layout.addWidget(self.tabs, 1)
         layout.addLayout(buttons)
 
-        self.list.itemClicked.connect(self._clicked)
-        self.list.currentItemChanged.connect(lambda cur, _: self._update_delete(cur))
         save.clicked.connect(self.save_requested.emit)
         self.delete.clicked.connect(self._delete_current)
 
@@ -59,36 +93,48 @@ class PresetPanel(QWidget):
         self._timer.timeout.connect(self._render_next)
         self.reload()
 
-    def _header(self, text: str) -> None:
+    @property
+    def list(self) -> QListWidget:
+        """La lista de la pestaña visible."""
+        return self.tabs.currentWidget()
+
+    def _header(self, lst: QListWidget, text: str) -> None:
         item = QListWidgetItem(text)
         item.setFlags(Qt.ItemFlag.NoItemFlags)
         font = item.font()
         font.setBold(True)
         item.setFont(font)
-        self.list.addItem(item)
+        lst.addItem(item)
 
     def reload(self) -> None:
-        self.list.clear()
         presets = list_presets()
-        builtin = [p for p in presets if p.builtin]
-        mine = [p for p in presets if not p.builtin]
-        builtin = [NONE_PRESET] + builtin
-        for title, group in (("Incluidos", builtin), ("Mis presets", mine)):
-            self._header(title)
-            for preset in group:
-                item = QListWidgetItem(preset.name)
-                item.setData(Qt.ItemDataRole.UserRole, preset)
-                item.setSizeHint(QSize(0, THUMB_SIZE.height() + 8))
-                if preset is NONE_PRESET:
-                    item.setToolTip("Quita los ajustes y vuelve a la foto original "
-                                    "(conserva el recorte). También puedes usar Ctrl+Z.")
-                elif preset.builtin:
-                    item.setToolTip("Incluido con Lighteye · clic para aplicar")
-                self.list.addItem(item)
-        if not mine:
-            hint = QListWidgetItem("Ajusta una foto y pulsa\n«Guardar actual…» para crear\nlos tuyos.")
-            hint.setFlags(Qt.ItemFlag.NoItemFlags)
-            self.list.addItem(hint)
+        for category, lst in self.lists.items():
+            lst.clear()
+            builtin = [p for p in presets if p.builtin and p.category == category]
+            mine = [p for p in presets if not p.builtin and p.category == category]
+            if category == "ajustes":
+                builtin = [NONE_PRESET] + builtin
+            for title, group in (("Incluidos", builtin), ("Mis presets", mine)):
+                self._header(lst, title)
+                for preset in group:
+                    item = QListWidgetItem(preset.name.removeprefix("IA · "))
+                    item.setData(Qt.ItemDataRole.UserRole, preset)
+                    item.setSizeHint(QSize(0, THUMB_SIZE.height() + 8))
+                    if preset is NONE_PRESET:
+                        item.setToolTip("Quita los ajustes y vuelve a la foto original "
+                                        "(conserva el recorte). También puedes usar Ctrl+Z.")
+                    elif category == "ia":
+                        item.setToolTip("Usa IA: la primera vez tarda unos segundos en calcularse")
+                    elif preset.builtin:
+                        item.setToolTip("Incluido con Lighteye · clic para aplicar")
+                    lst.addItem(item)
+            if not mine:
+                text = ("Ajusta una foto y pulsa\n«Guardar actual…» para crear\nlos tuyos."
+                        if category == "ajustes" else
+                        "Los presets que guardes usando\nherramientas de IA aparecerán aquí.")
+                hint = QListWidgetItem(text)
+                hint.setFlags(Qt.ItemFlag.NoItemFlags)
+                lst.addItem(hint)
         self.delete.setEnabled(False)
         self._schedule()
 
@@ -99,8 +145,8 @@ class PresetPanel(QWidget):
         self._schedule()
 
     def _schedule(self) -> None:
-        self._pending = [self.list.item(i) for i in range(self.list.count())
-                         if self.list.item(i).data(Qt.ItemDataRole.UserRole)]
+        self._pending = [lst.item(i) for lst in self.lists.values() for i in range(lst.count())
+                         if lst.item(i).data(Qt.ItemDataRole.UserRole)]
         if self._small is not None and self._pending:
             self._timer.start()
 
@@ -112,7 +158,10 @@ class PresetPanel(QWidget):
         preset: Preset = item.data(Qt.ItemDataRole.UserRole)
         try:
             rgb = to_display_u8(process(self._small, apply_look(self._geometry, preset.values)))
-            item.setIcon(QIcon(QPixmap.fromImage(array_to_qimage(rgb))))
+            pix = QPixmap.fromImage(array_to_qimage(rgb))
+            if preset.category == "ia":
+                pix = _ai_badge(pix)
+            item.setIcon(QIcon(pix))
         except Exception:  # noqa: BLE001 — p. ej. un LUT que ya no existe: sin miniatura
             item.setIcon(QIcon())
 

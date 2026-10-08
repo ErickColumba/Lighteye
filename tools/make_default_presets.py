@@ -81,11 +81,60 @@ PRESETS = {
 }
 
 
+# Presets de IA (pestaña «IA»): usan restaurar rostros, el retoque con
+# máscaras (piel, ojos, labios, pelo) y quitar el fondo. Pensados para los
+# mismos retratos: piel suave pero con textura, ojos verdes y pelo plateado
+# realzados, y fondos de estudio limpios.
+AI_PRESETS = {
+    "IA · Retrato pulido": {
+        "skin_smooth": 40, "eyes_brighten": 30, "lips_saturation": 10, "hair_shine": 25,
+        "whites": 25, "blacks": -18, "contrast": 8, "vibrance": 12,
+    },
+    "IA · Belleza suave": {
+        "skin_smooth": 65, "eyes_brighten": 35, "lips_saturation": 20, "hair_shine": 20,
+        "clarity": -20, "highlights": -20, "shadows": 15, "whites": 20, "temperature": 5,
+        "vignette": -12,
+    },
+    "IA · Ojos que brillan": {
+        "eyes_brighten": 60, "skin_smooth": 20, "hsl_s_green": 30, "hsl_l_green": 8,
+        "hsl_s_aqua": 20, "clarity": 10, "sharpen": 20, "whites": 15, "blacks": -15,
+    },
+    "IA · Cabello plateado": {
+        "hair_shine": 60, "skin_smooth": 20, "temperature": -6, "hsl_s_orange": -5,
+        "clarity": 10, "whites": 20, "blacks": -20, "contrast": 10,
+    },
+    "IA · Restaurar natural": {
+        "face_restore": 70, "skin_smooth": 15, "eyes_brighten": 15, "whites": 20,
+        "blacks": -15, "vibrance": 12,
+    },
+    "IA · Restaurar fiel (CodeFormer)": {
+        "face_restore": 80, "face_codeformer": 1, "face_fidelity": 80, "whites": 15,
+        "blacks": -12,
+    },
+    "IA · Fondo blanco (carnet)": {
+        "bg_remove": 1, "bg_color": [1.0, 1.0, 1.0], "skin_smooth": 25, "eyes_brighten": 20,
+        "exposure": 0.1, "whites": 15, "blacks": -10, "vibrance": 8,
+    },
+    "IA · Recorte transparente": {
+        "bg_remove": 1, "skin_smooth": 20, "eyes_brighten": 15, "whites": 15, "blacks": -12,
+    },
+    "IA · Estudio gris": {
+        "bg_remove": 1, "bg_color": [0.42, 0.43, 0.45], "skin_smooth": 35, "eyes_brighten": 25,
+        "hair_shine": 25, "contrast": 12, "whites": 20, "blacks": -20, "vignette": -18,
+    },
+    "IA · Editorial": {
+        "skin_smooth": 45, "eyes_brighten": 30, "lips_saturation": -15, "hair_shine": 30,
+        "temperature": -10, "saturation": -12, "contrast": 15, "whites": 15, "blacks": -20,
+        "split_shadow_hue": 200, "split_shadow_sat": 15, "split_high_hue": 38, "split_high_sat": 8,
+    },
+}
+
+
 def main():
     BUILTIN_DIR.mkdir(parents=True, exist_ok=True)
     for old in BUILTIN_DIR.glob("*.json"):
         old.unlink()
-    for name, values in PRESETS.items():
+    for name, values in {**PRESETS, **AI_PRESETS}.items():
         settings = Settings(values)
         unknown = set(values) - set(settings.non_default())
         if unknown:

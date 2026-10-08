@@ -1,6 +1,7 @@
 {
   "lighteye_preset": 1,
   "name": "Exterior · Dorado",
+  "category": "ajustes",
   "settings": {
     "highlights": -20.0,
     "shadows": 15.0,

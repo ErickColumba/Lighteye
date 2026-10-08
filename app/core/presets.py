@@ -37,6 +37,7 @@ class Preset:
     path: Path
     values: dict  # solo los ajustes distintos del valor por defecto
     builtin: bool = False  # incluido con Lighteye (no se puede borrar)
+    category: str = "ajustes"  # "ajustes" o "ia" (pestaña del panel)
 
 
 # Preset especial: quita todos los ajustes de color/luz (vuelve al original),
@@ -66,6 +67,14 @@ def apply_look(settings: Settings, values: dict) -> Settings:
     return result
 
 
+def category_of(values: dict) -> str:
+    """"ia" si el preset usa alguna herramienta de IA; si no, "ajustes"."""
+    from app.core.settings import BACKGROUND_KEYS, FACE_KEYS
+
+    ai_keys = set(FACE_KEYS) | set(BACKGROUND_KEYS)
+    return "ia" if ai_keys & set(values) else "ajustes"
+
+
 def _file_name(name: str) -> str:
     safe = re.sub(r"[^\w\-]+", " ", name, flags=re.UNICODE)
     safe = re.sub(r"\s+", " ", safe).strip() or "preset"
@@ -77,9 +86,11 @@ def save_preset(name: str, settings: Settings, folder: Path | None = None) -> Pr
     folder.mkdir(parents=True, exist_ok=True)
     values = look_values(settings)
     path = folder / _file_name(name)
-    data = {"lighteye_preset": PRESET_VERSION, "name": name.strip(), "settings": values}
+    category = category_of(values)
+    data = {"lighteye_preset": PRESET_VERSION, "name": name.strip(), "category": category,
+            "settings": values}
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    return Preset(name.strip(), path, values)
+    return Preset(name.strip(), path, values, category=category)
 
 
 def load_preset(path: Path, builtin: bool = False) -> Preset | None:
@@ -90,7 +101,8 @@ def load_preset(path: Path, builtin: bool = False) -> Preset | None:
             return None
         # Se normaliza pasando por Settings (descarta claves desconocidas).
         clean = look_values(Settings(values))
-        return Preset(str(data.get("name") or Path(path).stem), Path(path), clean, builtin)
+        return Preset(str(data.get("name") or Path(path).stem), Path(path), clean, builtin,
+                      category_of(clean))
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
 

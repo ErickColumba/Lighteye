@@ -1,0 +1,17 @@
+{
+  "lighteye_preset": 1,
+  "name": "IA · Belleza suave",
+  "category": "ia",
+  "settings": {
+    "highlights": -20.0,
+    "shadows": 15.0,
+    "whites": 20.0,
+    "temperature": 5.0,
+    "clarity": -20.0,
+    "vignette": -12.0,
+    "skin_smooth": 65.0,
+    "eyes_brighten": 35.0,
+    "lips_saturation": 20.0,
+    "hair_shine": 20.0
+  }
+}

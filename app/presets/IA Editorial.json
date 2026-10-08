@@ -1,0 +1,20 @@
+{
+  "lighteye_preset": 1,
+  "name": "IA · Editorial",
+  "category": "ia",
+  "settings": {
+    "contrast": 15.0,
+    "whites": 15.0,
+    "blacks": -20.0,
+    "temperature": -10.0,
+    "saturation": -12.0,
+    "split_shadow_hue": 200.0,
+    "split_shadow_sat": 15.0,
+    "split_high_hue": 38.0,
+    "split_high_sat": 8.0,
+    "skin_smooth": 45.0,
+    "eyes_brighten": 30.0,
+    "lips_saturation": -15.0,
+    "hair_shine": 30.0
+  }
+}

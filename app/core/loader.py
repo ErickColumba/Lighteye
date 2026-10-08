@@ -55,7 +55,22 @@ def _load_raster(path: Path) -> LoadedImage:
         linear = int_srgb_to_linear(img)
     else:  # TIFF en coma flotante
         linear = srgb_to_linear(np.clip(img.astype(np.float32), 0.0, 1.0))
+    linear = _flatten_alpha(data, linear)
     return LoadedImage(path, linear, False, {"bits": bits})
+
+
+def _flatten_alpha(data: np.ndarray, linear: np.ndarray) -> np.ndarray:
+    """Si la imagen tiene transparencia (p. ej. un PNG sin fondo), se pone
+    sobre blanco. Si no, bajo las zonas transparentes aparecerían los colores
+    que el archivo guarda ocultos (a menudo, el fondo original)."""
+    raw = cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
+    if raw is None or raw.ndim != 3 or raw.shape[2] != 4 or raw.shape[:2] != linear.shape[:2]:
+        return linear  # sin alfa (o girada por EXIF, que no se da en PNG con alfa)
+    top = 65535.0 if raw.dtype == np.uint16 else 255.0 if raw.dtype == np.uint8 else 1.0
+    alpha = (raw[..., 3].astype(np.float32) / top)[..., None]
+    if alpha.min() >= 1.0:
+        return linear
+    return linear * alpha + (1.0 - alpha)
 
 
 def _load_raw(path: Path) -> LoadedImage:

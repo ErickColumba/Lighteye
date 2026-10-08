@@ -1,6 +1,7 @@
 {
   "lighteye_preset": 1,
   "name": "B/N · Retrato clásico",
+  "category": "ajustes",
   "settings": {
     "contrast": 25.0,
     "whites": 20.0,

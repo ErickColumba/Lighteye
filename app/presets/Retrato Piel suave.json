@@ -1,6 +1,7 @@
 {
   "lighteye_preset": 1,
   "name": "Retrato · Piel suave",
+  "category": "ajustes",
   "settings": {
     "exposure": 0.12,
     "contrast": -5.0,

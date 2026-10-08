@@ -1,0 +1,16 @@
+{
+  "lighteye_preset": 1,
+  "name": "IA · Ojos que brillan",
+  "category": "ia",
+  "settings": {
+    "whites": 15.0,
+    "blacks": -15.0,
+    "sharpen": 20.0,
+    "clarity": 10.0,
+    "skin_smooth": 20.0,
+    "eyes_brighten": 60.0,
+    "hsl_s_green": 30.0,
+    "hsl_s_aqua": 20.0,
+    "hsl_l_green": 8.0
+  }
+}

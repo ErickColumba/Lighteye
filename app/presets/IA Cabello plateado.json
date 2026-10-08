@@ -1,0 +1,15 @@
+{
+  "lighteye_preset": 1,
+  "name": "IA · Cabello plateado",
+  "category": "ia",
+  "settings": {
+    "contrast": 10.0,
+    "whites": 20.0,
+    "blacks": -20.0,
+    "temperature": -6.0,
+    "clarity": 10.0,
+    "skin_smooth": 20.0,
+    "hair_shine": 60.0,
+    "hsl_s_orange": -5.0
+  }
+}

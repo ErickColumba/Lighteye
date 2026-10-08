@@ -84,3 +84,13 @@ def test_int_srgb_to_linear_matches_exact_formula():
     assert np.allclose(int_srgb_to_linear(u8), srgb_to_linear(u8 / 255.0), atol=1e-7)
     u16 = np.array([0, 1, 1000, 32768, 65535], np.uint16)
     assert np.allclose(int_srgb_to_linear(u16), srgb_to_linear(u16 / 65535.0), atol=1e-7)
+
+
+def test_transparent_png_opens_over_white(tmp_path):
+    rgba = np.zeros((4, 4, 4), np.uint8)
+    rgba[..., :3] = (20, 120, 200)  # BGR: color oculto bajo la transparencia
+    rgba[:2, :, 3] = 255  # mitad de arriba opaca
+    cv2.imencode(".png", rgba)[1].tofile(tmp_path / "t.png")
+    img = load_image(tmp_path / "t.png").image
+    assert np.allclose(img[3, 0], 1.0)  # transparente → blanco
+    assert img[0, 0, 2] < 0.1  # opaco → su color (azul = 20)
