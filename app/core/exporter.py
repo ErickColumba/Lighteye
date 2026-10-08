@@ -13,7 +13,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.core.color import linear_to_srgb
+from app.core.color import linear_to_srgb_u16, to_display_u8
 from app.core.pipeline import render_full
 from app.core.settings import Settings
 
@@ -55,11 +55,10 @@ def resize_long_side(img: np.ndarray, long_side: int | None) -> np.ndarray:
 
 
 def to_output_bits(linear: np.ndarray, bits: int) -> np.ndarray:
-    """Lineal float32 -> sRGB entero de 8 o 16 bits (RGB)."""
-    srgb = linear_to_srgb(linear)
+    """Lineal float32 -> sRGB entero de 8 o 16 bits (RGB), con tablas."""
     if bits == 16:
-        return (srgb * 65535.0 + 0.5).astype(np.uint16)
-    return (srgb * 255.0 + 0.5).astype(np.uint8)
+        return linear_to_srgb_u16(linear)
+    return to_display_u8(linear)
 
 
 def encode(rgb: np.ndarray, options: ExportOptions) -> bytes:
@@ -169,3 +168,51 @@ def export_image(src: Path, image: np.ndarray, settings: Settings, out_path: Pat
     if progress:
         progress(1.0)
     return out_path
+
+
+# --- Por lotes -------------------------------------------------------------------
+
+
+def unique_path(path: Path) -> Path:
+    """`path`, o `nombre_2.ext`, `nombre_3.ext`… si ya existe (nunca sobrescribe)."""
+    path = Path(path)
+    candidate, n = path, 2
+    while candidate.exists():
+        candidate = path.with_name(f"{path.stem}_{n}{path.suffix}")
+        n += 1
+    return candidate
+
+
+def export_many(paths: list[Path], out_dir: Path, options: ExportOptions,
+                progress=None) -> list[tuple[Path, str]]:
+    """Exporta varias fotos, cada una con sus propios ajustes (su sidecar).
+
+    `progress(fracción total 0–1, índice, ruta)` informa del avance; si lanza
+    una excepción se detiene todo. Un error en una foto no detiene el resto:
+    se devuelve la lista de (foto, mensaje de error).
+    """
+    from app.core.loader import load_image
+    from app.core.settings import load_sidecar
+
+    errors = []
+    total = len(paths)
+    for i, src in enumerate(paths):
+        src = Path(src)
+
+        def step(fraction, i=i, src=src):
+            if progress:
+                progress((i + fraction) / total, i, src)
+
+        step(0.0)
+        try:
+            loaded = load_image(src)
+            settings = load_sidecar(src) or Settings()
+            out = unique_path(Path(out_dir) / default_output_path(src, options).name)
+            export_image(src, loaded.image, settings, out, options, step)
+        except InterruptedError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — se informa al final
+            errors.append((src, str(exc) or exc.__class__.__name__))
+    if progress:
+        progress(1.0, total - 1, Path(paths[-1]) if paths else Path())
+    return errors

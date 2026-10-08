@@ -96,3 +96,41 @@ def test_cancel_leaves_no_file(tmp_path, photo):
 
 def test_default_output_path(photo):
     assert default_output_path(photo, ExportOptions("tiff16")).name == "foto_lighteye.tif"
+
+
+def test_export_many_uses_each_sidecar_and_never_overwrites(tmp_path):
+    from app.core.exporter import export_many
+    from app.core.settings import save_sidecar
+
+    folder = tmp_path / "fotos"
+    folder.mkdir()
+    paths = []
+    for i, value in enumerate((60, 120, 180)):
+        p = folder / f"f{i}.jpg"
+        cv2.imencode(".jpg", np.full((60, 90, 3), value, np.uint8))[1].tofile(p)
+        paths.append(p)
+    save_sidecar(paths[1], Settings({"rotate": 1}))
+    (folder / "rota.jpg").write_bytes(b"no es una imagen")
+    out = tmp_path / "salida"
+    out.mkdir()
+    (out / "f0_lighteye.jpg").write_bytes(b"export anterior")
+
+    seen = []
+    errors = export_many(paths + [folder / "rota.jpg"], out, ExportOptions("jpeg"),
+                         lambda f, i, p: seen.append(f))
+    assert [e[0].name for e in errors] == ["rota.jpg"]
+    names = sorted(p.name for p in out.iterdir())
+    assert names == ["f0_lighteye.jpg", "f0_lighteye_2.jpg", "f1_lighteye.jpg", "f2_lighteye.jpg"]
+    assert (out / "f0_lighteye.jpg").read_bytes() == b"export anterior"
+    rotated = cv2.imread(str(out / "f1_lighteye.jpg"))
+    assert rotated.shape[:2] == (90, 60)
+    assert seen == sorted(seen) and seen[-1] == 1.0
+
+
+def test_fast_output_conversion_matches_exact_formula():
+    from app.core.exporter import to_output_bits
+    x = np.concatenate([np.linspace(0, 0.01, 5000), np.linspace(0, 1, 5000)]).astype(np.float32)
+    exact16 = np.round(linear_to_srgb(x) * 65535)
+    assert np.abs(to_output_bits(x, 16).astype(np.int64) - exact16).max() <= 1
+    exact8 = np.round(linear_to_srgb(x) * 255)
+    assert np.abs(to_output_bits(x, 8).astype(np.int64) - exact8).max() <= 1

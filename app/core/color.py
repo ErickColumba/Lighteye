@@ -67,6 +67,24 @@ def int_srgb_to_linear(img: np.ndarray) -> np.ndarray:
     raise TypeError(f"Tipo no soportado: {img.dtype}")
 
 
+# Para exportar a 16 bits hace falta más finura en las sombras que con una
+# tabla de 65536 entradas: se usa una de 2^20 (≈4 MB), que sigue siendo
+# mucho más rápida que la fórmula exacta y difiere menos de 1 nivel de 16 bits.
+_EXPORT_LUT_SIZE = 1 << 20
+_EXPORT_LUT_16 = None
+
+
+def linear_to_srgb_u16(img: np.ndarray) -> np.ndarray:
+    global _EXPORT_LUT_16
+    if _EXPORT_LUT_16 is None:
+        domain = np.linspace(0.0, 1.0, _EXPORT_LUT_SIZE, dtype=np.float32)
+        _EXPORT_LUT_16 = (linear_to_srgb(domain) * 65535.0 + 0.5).astype(np.uint16)
+    idx = np.clip(img, 0.0, 1.0)
+    idx *= _EXPORT_LUT_SIZE - 1
+    idx += 0.5
+    return _EXPORT_LUT_16[idx.astype(np.uint32)]
+
+
 def to_srgb_fast(img: np.ndarray) -> np.ndarray:
     """linear_to_srgb con LUT (recorta a 0–1)."""
     return _TO_SRGB_LUT[lut_index(img)]

@@ -146,3 +146,45 @@ class ExportWorker(QThread):
             self.failed.emit(str(exc) or exc.__class__.__name__)
         else:
             self.succeeded.emit(str(path))
+
+
+def ask_output_folder(parent, start: Path) -> Path | None:
+    store = QSettings()
+    folder = QFileDialog.getExistingDirectory(parent, "Carpeta de destino",
+                                              str(store.value("export/dir", str(start))))
+    if not folder:
+        return None
+    store.setValue("export/dir", folder)
+    return Path(folder)
+
+
+class BatchExportWorker(QThread):
+    """Exporta varias fotos seguidas, cada una con sus propios ajustes."""
+
+    progress = Signal(int, str)  # 0–100, texto
+    finished_all = Signal(list, bool)  # [(ruta, error)], cancelada
+
+    def __init__(self, paths: list[Path], out_dir: Path, options: ExportOptions, parent=None):
+        super().__init__(parent)
+        self.paths, self.out_dir, self.options = paths, out_dir, options
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def _report(self, fraction: float, index: int, path: Path) -> None:
+        if self._cancelled:
+            raise InterruptedError
+        n = len(self.paths)
+        self.progress.emit(round(fraction * 100),
+                           f"Exportando {min(index + 1, n)} de {n}: {path.name}")
+
+    def run(self) -> None:
+        from app.core.exporter import export_many
+
+        try:
+            errors = export_many(self.paths, self.out_dir, self.options, self._report)
+        except InterruptedError:
+            self.finished_all.emit([], True)
+        else:
+            self.finished_all.emit([(str(p), msg) for p, msg in errors], False)

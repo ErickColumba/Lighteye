@@ -40,7 +40,13 @@ from app.core.presets import apply_look, delete_preset, list_presets, look_value
 from app.core.settings import Settings, load_sidecar, save_sidecar, sidecar_path
 from app.ui.browser import FilmStrip
 from app.ui.crop_tools import CropToolbar
-from app.ui.export_dialog import ExportDialog, ExportWorker, ask_output_path
+from app.ui.export_dialog import (
+    BatchExportWorker,
+    ExportDialog,
+    ExportWorker,
+    ask_output_folder,
+    ask_output_path,
+)
 from app.ui.histogram import HistogramWidget
 from app.ui.panels import AdjustmentPanel
 from app.ui.presets_panel import PresetPanel
@@ -149,6 +155,8 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         self.export_action = self._add_action(file_menu, "&Exportar…", "Ctrl+E", self.export)
         self.export_action.setEnabled(False)
+        self._add_action(file_menu, "Exportar &seleccionadas…", "Ctrl+Shift+E",
+                         lambda: self.export_batch(self.filmstrip.selected_paths()))
         file_menu.addSeparator()
         self._add_action(file_menu, "&Salir", QKeySequence.StandardKey.Quit, self.close)
 
@@ -550,7 +558,54 @@ class MainWindow(QMainWindow):
                                 + "\n".join(failed))
 
     def export_batch(self, paths: list[str]) -> None:
-        pass
+        if not paths:
+            self.statusBar().showMessage("Selecciona fotos en la tira de la carpeta (Ctrl/Mayús + clic)", 5000)
+            return
+        if self._export_worker is not None:
+            return
+        if self.crop_mode:
+            self.apply_crop()
+        self._commit_history()  # la foto abierta exporta sus últimos ajustes
+        dialog = ExportDialog(self)
+        dialog.setWindowTitle(f"Exportar {len(paths)} fotos")
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        out_dir = ask_output_folder(self, Path(paths[0]).parent)
+        if out_dir is None:
+            return
+
+        progress = QProgressDialog("Preparando…", "Cancelar", 0, 100, self)
+        progress.setWindowTitle("Exportar por lotes")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setMinimumWidth(420)
+        progress.setValue(0)
+
+        worker = BatchExportWorker([Path(p) for p in paths], out_dir, dialog.options(), self)
+
+        def update(value: int, text: str) -> None:
+            progress.setValue(value)
+            progress.setLabelText(text)
+
+        def done(errors: list, cancelled: bool) -> None:
+            progress.reset()
+            self._export_worker = None
+            worker.deleteLater()
+            if cancelled:
+                self.statusBar().showMessage("Exportación cancelada", 4000)
+            elif errors:
+                lines = "\n".join(f"• {Path(p).name}: {msg}" for p, msg in errors[:10])
+                QMessageBox.warning(self, "Lighteye",
+                                    f"Se exportaron {len(paths) - len(errors)} de {len(paths)} fotos.\n"
+                                    f"Fallaron:\n{lines}")
+            else:
+                self.statusBar().showMessage(f"{len(paths)} fotos exportadas en {out_dir}", 8000)
+
+        worker.progress.connect(update)
+        progress.canceled.connect(worker.cancel)
+        worker.finished_all.connect(done)
+        self._export_worker = worker
+        worker.start()
 
     # --- Presets ----------------------------------------------------------------
 

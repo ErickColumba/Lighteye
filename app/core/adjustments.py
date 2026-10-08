@@ -249,12 +249,13 @@ def fast_blur(x: np.ndarray, sigma: float) -> np.ndarray:
 def _perceptual_luma(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """(luminancia lineal, luminancia perceptual) de la imagen."""
     lum = np.maximum(cv2.transform(img, LUMA[None, :]), 0.0)
-    return lum, lum ** (1 / PERCEPTUAL_GAMMA)
+    # cv2.pow es varias veces más rápido que ** de NumPy en imágenes grandes.
+    return lum, cv2.pow(lum, 1 / PERCEPTUAL_GAMMA)
 
 
 def _apply_luma(img: np.ndarray, lum: np.ndarray, new_p: np.ndarray) -> np.ndarray:
     """Aplica una nueva luminancia perceptual como ganancia sobre RGB."""
-    new_lum = np.maximum(new_p, 0.0) ** PERCEPTUAL_GAMMA
+    new_lum = cv2.pow(np.maximum(new_p, 0.0), PERCEPTUAL_GAMMA)
     gain = np.minimum(new_lum / np.maximum(lum, 1e-6), 8.0)
     return img * gain[..., None]
 
@@ -400,7 +401,8 @@ def vignette(img: np.ndarray, amount: float, size: float, feather: float) -> np.
     if amount == 0:
         return img
     mask = _vignette_mask(img.shape[0], img.shape[1], size, feather)
-    return img * np.exp2(amount / 100.0 * 2.0 * mask)[..., None]
+    gain = cv2.exp(mask * np.float32(amount / 100.0 * 2.0 * np.log(2.0)))  # 2^x
+    return img * gain[..., None]
 
 
 @lru_cache(maxsize=2)
@@ -427,7 +429,8 @@ def grain(img: np.ndarray, amount: float, size: float) -> np.ndarray:
     _, y = _perceptual_luma(img)
     weight = np.clip(4.0 * y * (1.0 - y) + 0.2, 0.0, 1.0)
     noise = _grain_field(img.shape[0], img.shape[1], size)
-    return img * np.exp2(noise * weight * (amount / 100.0 * 0.5))[..., None]
+    gain = cv2.exp(noise * weight * np.float32(amount / 100.0 * 0.5 * np.log(2.0)))  # 2^x
+    return img * gain[..., None]
 
 
 def lut(img: np.ndarray, path: str | None, amount: float) -> np.ndarray:
