@@ -11,11 +11,19 @@ modelos.
 """
 
 import threading
+import warnings
 from functools import lru_cache
 
+import cv2
 import numpy as np
 
 from app.ai.registry import MODELS
+
+# Avisos internos de las librerías que no indican ningún problema:
+# - PyTorch avisa de que torch.jit (con el que está guardado LaMa) quedará obsoleto.
+# - OpenCV avisa al preparar el detector de caras YuNet con su nuevo motor.
+warnings.filterwarnings("ignore", category=FutureWarning, module=r"torch\.jit")
+cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
 
 _lock = threading.Lock()
 _loaded: dict[str, object] = {}
