@@ -87,6 +87,7 @@ class CurveCanvas(QWidget):
         p.setBrush(QColor(38, 38, 38))
         for x, y in self.points:
             p.drawEllipse(self._to_px(x, y), 4.5, 4.5)
+        p.end()
 
     def _draw_curve(self, p: QPainter, pts: tuple, color: QColor, width: float) -> None:
         ys = sample(pts, 256)

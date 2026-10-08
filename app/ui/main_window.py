@@ -78,6 +78,9 @@ class MainWindow(QMainWindow):
         # como un solo paso cuando el usuario se detiene un momento.
         self._history_timer = QTimer(self, singleShot=True, interval=400)
         self._history_timer.timeout.connect(self._commit_history)
+        # Mientras se arrastra se muestra un borrador; al parar, la versión completa.
+        self._settle_timer = QTimer(self, singleShot=True, interval=150)
+        self._settle_timer.timeout.connect(self._request_render)
 
         self.viewer = ImageViewer(self)
         self.setCentralWidget(self.viewer)
@@ -284,7 +287,11 @@ class MainWindow(QMainWindow):
         self._set_before(False)  # al editar se vuelve a ver el resultado
         self._history_timer.start()
         self._update_history_actions()
-        self._request_render()
+        # Botón del ratón pulsado = arrastrando un slider o un punto de la curva.
+        dragging = bool(QApplication.mouseButtons() & Qt.MouseButton.LeftButton)
+        if dragging:
+            self._settle_timer.start()
+        self._request_render(draft=dragging)
 
     def reset_all(self) -> None:
         self._apply_settings(Settings())
@@ -346,11 +353,13 @@ class MainWindow(QMainWindow):
         self._update_history_actions()
         self.statusBar().showMessage(f"{verb}: {what}", 3000)
 
-    def _request_render(self) -> None:
+    def _request_render(self, draft: bool = False) -> None:
         # La interfaz nunca procesa la imagen: solo pide un nuevo cálculo.
         if self.preview is not None:
+            if not draft:
+                self._settle_timer.stop()
             self._sync_source()
-            self.renderer.request(self.preview, self.settings)
+            self.renderer.request(self.preview, self.settings, draft=draft)
 
     def _sync_source(self) -> None:
         """Recalcula la imagen de origen si cambió la geometría.

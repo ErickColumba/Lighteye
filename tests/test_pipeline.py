@@ -46,3 +46,44 @@ def test_full_resolution_matches_preview():
     blur = lambda im: cv2.GaussianBlur(im, (0, 0), 2)
     assert np.abs(blur(a) - blur(b)).mean() < 0.01
     assert np.abs(blur(a) - blur(b)).max() < 0.08
+
+
+def test_cache_gives_identical_results_while_dragging_sliders():
+    from app.core.pipeline import PipelineCache
+
+    img = _scene(300, 450)
+    cache = PipelineCache()
+    base = dict(EVERYTHING)
+    # Simula arrastrar varios sliders, volver atrás y cambiar de slider.
+    sequence = [("contrast", v) for v in (20, 25, 30)] + [("vignette", v) for v in (-30, -50)] \
+        + [("exposure", 0.6), ("contrast", 25), ("grain", 0), ("grain", 20)]
+    for key, value in sequence:
+        base[key] = value
+        s = Settings(base)
+        cached = process(img, s, cache=cache)
+        assert np.array_equal(cached, process(img, s)), (key, value)
+    assert 0 < len(cache.checkpoints) <= cache.max_checkpoints
+
+
+def test_cache_resets_with_new_image_and_output_is_independent():
+    from app.core.pipeline import PipelineCache
+
+    cache = PipelineCache()
+    a, b = _scene(100, 150), _scene(100, 150) * 0.5
+    s = Settings({"exposure": 1, "contrast": 10})
+    out_a = process(a, s, cache=cache)
+    out_b = process(b, s, cache=cache)
+    assert not np.allclose(out_a, out_b)
+    again = process(b, s, cache=cache)  # todo desde la caché
+    again += 1  # modificar el resultado no debe estropear la caché
+    assert np.array_equal(process(b, s, cache=cache), out_b)
+
+
+def test_detail_scale_halves_radii_for_draft():
+    full = _scene(400, 600)
+    half = cv2.resize(full, (300, 200), interpolation=cv2.INTER_AREA)
+    s = Settings({"clarity": 60, "sharpen": 80})
+    ref = cv2.resize(process(full, s), (300, 200), interpolation=cv2.INTER_AREA)
+    good = process(half, s, detail_scale=0.5)
+    naive = process(half, s)
+    assert np.abs(good - ref).mean() < np.abs(naive - ref).mean()

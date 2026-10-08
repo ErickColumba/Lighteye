@@ -19,4 +19,6 @@ pip install -r requirements.txt
 python main.py              # abre la aplicación
 python main.py foto.jpg     # abre directamente una foto
 python -m pytest            # ejecuta las pruebas
+python tools/bench_pipeline.py          # tiempo de cada ajuste
+python tools/bench_pipeline.py --drag   # fluidez al arrastrar sliders
 ```

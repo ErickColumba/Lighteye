@@ -5,6 +5,7 @@ devuelve una imagen nueva sin modificar la de entrada. Los valores pueden
 superar 1.0 (luces por encima del blanco) hasta el final del pipeline.
 """
 
+from contextvars import ContextVar
 from functools import lru_cache
 
 import cv2
@@ -228,9 +229,14 @@ def hsl(img: np.ndarray, *values: float) -> np.ndarray:
 # completa se vea igual que la vista previa.
 
 
+# Escala de la vista previa que se está calculando: 1 normalmente, 0.5 en el
+# borrador a media resolución que se usa mientras se arrastra un slider.
+DETAIL_SCALE: ContextVar[float] = ContextVar("detail_scale", default=1.0)
+
+
 def _px(img: np.ndarray, base: float) -> float:
     # Las imágenes menores que la vista previa no se reducen: usan el radio base.
-    return base * max(1.0, max(img.shape[:2]) / PREVIEW_LONG_SIDE)
+    return base * max(DETAIL_SCALE.get(), max(img.shape[:2]) / PREVIEW_LONG_SIDE)
 
 
 def fast_blur(x: np.ndarray, sigma: float) -> np.ndarray:

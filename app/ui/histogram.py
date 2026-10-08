@@ -48,6 +48,7 @@ class HistogramWidget(QWidget):
         if h is None:
             p.setPen(QColor(120, 120, 120))
             p.drawText(area, Qt.AlignmentFlag.AlignCenter, "Sin foto")
+            p.end()  # explícito: si no, Qt avisa de un painter activo
             return
 
         # Escala: se ignoran los extremos (0 y 255), que suelen tener picos
@@ -64,6 +65,7 @@ class HistogramWidget(QWidget):
 
         self._triangle(p, left=True, on=h.clipped_shadows > CLIP_WARNING, color=QColor(60, 120, 255))
         self._triangle(p, left=False, on=h.clipped_highlights > CLIP_WARNING, color=QColor(255, 70, 70))
+        p.end()
 
     def _curve(self, counts: np.ndarray, peak: float, area: QRectF, closed: bool = True) -> QPainterPath:
         values = np.minimum(counts / peak, 1.0)
