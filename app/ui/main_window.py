@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressDialog,
     QSizePolicy,
+    QTabWidget,
     QToolBar,
     QToolButton,
     QVBoxLayout,
@@ -134,7 +135,19 @@ class MainWindow(QMainWindow):
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(0, 0, 0, 0)
         side_layout.addWidget(self.histogram)
-        side_layout.addWidget(self.panel, 1)
+        from app.ui.applied_panel import AppliedPanel
+
+        self.applied = AppliedPanel()
+        self.applied.changed.connect(self._applied_changed)
+        self.applied.reset_requested.connect(self._applied_reset)
+        self.applied.reset_all_requested.connect(self.reset_all)
+        self.side_tabs = QTabWidget()
+        self.side_tabs.setDocumentMode(True)
+        self.side_tabs.addTab(self.panel, "Ajustes")
+        self.side_tabs.addTab(self.applied, "Aplicados")
+        self.side_tabs.setTabToolTip(1, "Solo los ajustes que tiene esta foto: cámbialos o quítalos")
+        self.side_tabs.currentChanged.connect(lambda _: self._refresh_applied())
+        side_layout.addWidget(self.side_tabs, 1)
         dock = QDockWidget("Ajustes", self)
         dock.setObjectName("ajustes")
         dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable)
@@ -472,8 +485,35 @@ class MainWindow(QMainWindow):
         self._update_history_actions()
         self.statusBar().showMessage(f"{verb}: {what}", 3000)
 
+    def _refresh_applied(self) -> None:
+        if self.side_tabs.currentWidget() is self.applied:
+            self.applied.set_settings(self.settings)
+        count = len(self.settings.non_default())
+        self.side_tabs.setTabText(1, f"Aplicados ({count})" if count else "Aplicados")
+
+    def _applied_changed(self, key: str, value) -> None:
+        """Valor cambiado desde la pestaña «Aplicados»."""
+        self._on_param_changed(key, value)
+        self.panel.set_settings(self.settings)
+
+    def _applied_reset(self, key: str) -> None:
+        """Quitar un ajuste desde la pestaña «Aplicados»."""
+        if self.crop_mode:
+            self.apply_crop()
+        self._commit_history()
+        from app.core.history import describe_changes
+
+        old = self.settings.copy()
+        new = self.settings.copy()
+        new.reset(key)
+        self._apply_settings(new)
+        self._commit_history()
+        self.statusBar().showMessage(f"Quitado: {describe_changes(new, old) or key} (Ctrl+Z para deshacer)",
+                                     4000)
+
     def _request_render(self, draft: bool = False) -> None:
         # La interfaz nunca procesa la imagen: solo pide un nuevo cálculo.
+        self._refresh_applied()
         if self.preview is not None:
             if not draft:
                 self._settle_timer.stop()

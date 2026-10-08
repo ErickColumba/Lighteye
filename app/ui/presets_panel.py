@@ -112,8 +112,7 @@ class PresetPanel(QWidget):
             lst.clear()
             builtin = [p for p in presets if p.builtin and p.category == category]
             mine = [p for p in presets if not p.builtin and p.category == category]
-            if category == "ajustes":
-                builtin = [NONE_PRESET] + builtin
+            builtin = [NONE_PRESET] + builtin  # en las dos pestañas
             for title, group in (("Incluidos", builtin), ("Mis presets", mine)):
                 self._header(lst, title)
                 for preset in group:
@@ -121,8 +120,8 @@ class PresetPanel(QWidget):
                     item.setData(Qt.ItemDataRole.UserRole, preset)
                     item.setSizeHint(QSize(0, THUMB_SIZE.height() + 8))
                     if preset is NONE_PRESET:
-                        item.setToolTip("Quita los ajustes y vuelve a la foto original "
-                                        "(conserva el recorte). También puedes usar Ctrl+Z.")
+                        item.setToolTip("Quita los ajustes (también los de IA) y vuelve a la foto "
+                                        "original; conserva el recorte. También puedes usar Ctrl+Z.")
                     elif category == "ia":
                         item.setToolTip("Usa IA: la primera vez tarda unos segundos en calcularse")
                     elif preset.builtin:
