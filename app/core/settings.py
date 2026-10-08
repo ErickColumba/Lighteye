@@ -54,6 +54,7 @@ PARAMS += [
     Param("nr_luma", "Reducción de ruido", "Detalle", 0, 100),
     Param("nr_color", "Ruido de color", "Detalle", 0, 100),
     Param("clarity", "Claridad", "Detalle", -100, 100),
+    Param("dehaze", "Neblina", "Detalle", -100, 100),
 ]
 
 # HSL por color: (clave, nombre, centro del rango de tono en grados).

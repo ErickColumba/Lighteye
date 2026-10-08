@@ -22,6 +22,7 @@ STEPS = [
     (("vibrance",), adj.vibrance),
     (("saturation",), adj.saturation),
     (("clarity",), adj.clarity),
+    (("dehaze",), adj.dehaze),
     # Nitidez de salida: al final, sobre la imagen ya terminada.
     (("sharpen",), adj.sharpen),
 ]

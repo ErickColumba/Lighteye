@@ -303,3 +303,37 @@ def noise_reduction(img: np.ndarray, luma: float, color: float) -> np.ndarray:
         detail *= 1.0 - np.exp(-((detail / threshold) ** 2))
         out = _apply_luma(out, lum, base + detail)
     return out
+
+
+HAZE_MAP_SIDE = 400  # el mapa de neblina se calcula a esta resolución
+
+
+def dehaze(img: np.ndarray, amount: float) -> np.ndarray:
+    """Quita (amount > 0) o añade (amount < 0) neblina.
+
+    Dark Channel Prior simplificado: en una zona sin neblina casi siempre hay
+    algún canal oscuro; si no lo hay, es por la neblina. El mapa de
+    transmisión se calcula en pequeño y suavizado, así es rápido y el
+    resultado coincide entre la vista previa y la exportación.
+    """
+    h, w = img.shape[:2]
+    f = HAZE_MAP_SIDE / max(h, w)
+    small = cv2.resize(img, (max(1, round(w * f)), max(1, round(h * f))),
+                       interpolation=cv2.INTER_AREA) if f < 1 else img
+    kernel = np.ones((7, 7), np.uint8)
+
+    # Luz de la neblina (A): color medio del 0.1 % de píxeles más "neblinosos".
+    dark = cv2.erode(small.min(axis=2), kernel)
+    n = max(1, dark.size // 1000)
+    brightest = np.argpartition(dark.ravel(), -n)[-n:]
+    airlight = np.maximum(small.reshape(-1, 3)[brightest].mean(axis=0), 0.05).astype(np.float32)
+
+    if amount < 0:
+        return img + (airlight - img) * np.float32(-amount / 100.0 * 0.5)
+
+    strength = 0.9 * amount / 100.0
+    t = 1.0 - strength * cv2.erode((small / airlight).min(axis=2), kernel)
+    t = cv2.GaussianBlur(t, (0, 0), 4.0)
+    t = cv2.resize(t, (w, h), interpolation=cv2.INTER_LINEAR)
+    t = np.maximum(t, 0.15)[..., None]
+    return np.maximum((img - airlight) / t + airlight, 0.0)

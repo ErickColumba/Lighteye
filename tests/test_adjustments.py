@@ -307,3 +307,28 @@ def test_color_noise_reduction_does_not_bleed_strong_colour_edges():
     # Un desenfoque sin límite llevaría el rojo a ~0.25 junto al borde.
     assert out[:, 34, 0].mean() < 0.1
     assert np.allclose(out[:, 44:], x[:, 44:], atol=0.01)
+
+
+# --- Neblina ------------------------------------------------------------------
+
+def _hazy_scene():
+    rng = np.random.default_rng(3)
+    clean = rng.uniform(0.0, 0.6, (120, 160, 3)).astype(np.float32)
+    clean = cv2.GaussianBlur(clean, (0, 0), 3)
+    clean[..., 2] *= 0.2  # un canal oscuro, como en una escena real
+    haze = np.array([0.8, 0.82, 0.85], np.float32)
+    clean[:20] = haze  # franja de cielo: de ahí sale el color de la neblina
+    return clean * 0.5 + haze * 0.5
+
+
+def test_dehaze_zero_is_identity(img):
+    assert np.allclose(adj.dehaze(img, 0), img, atol=1e-6)
+
+
+def test_dehaze_increases_contrast_and_negative_adds_haze():
+    hazy = _hazy_scene()
+    clearer = adj.dehaze(hazy, 80)
+    assert clearer.std() > hazy.std() * 1.3
+    assert clearer.mean() < hazy.mean()
+    foggier = adj.dehaze(hazy, -80)
+    assert foggier.std() < hazy.std()
