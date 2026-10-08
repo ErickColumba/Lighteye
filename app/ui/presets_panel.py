@@ -46,8 +46,9 @@ class PresetPanel(QWidget):
         layout.addWidget(self.list, 1)
         layout.addLayout(buttons)
 
-        self.list.itemClicked.connect(lambda item: self.apply_requested.emit(item.data(Qt.ItemDataRole.UserRole)))
-        self.list.currentItemChanged.connect(lambda cur, _: self.delete.setEnabled(cur is not None))
+        self.list.itemClicked.connect(self._clicked)
+        self.list.currentItemChanged.connect(
+            lambda cur, _: self.delete.setEnabled(bool(cur and cur.data(Qt.ItemDataRole.UserRole))))
         save.clicked.connect(self.save_requested.emit)
         self.delete.clicked.connect(self._delete_current)
 
@@ -96,6 +97,11 @@ class PresetPanel(QWidget):
             item.setIcon(QIcon(QPixmap.fromImage(array_to_qimage(rgb))))
         except Exception:  # noqa: BLE001 — p. ej. un LUT que ya no existe: sin miniatura
             item.setIcon(QIcon())
+
+    def _clicked(self, item: QListWidgetItem) -> None:
+        preset = item.data(Qt.ItemDataRole.UserRole)
+        if preset is not None:  # el aviso "Sin presets todavía" no es un preset
+            self.apply_requested.emit(preset)
 
     def _delete_current(self) -> None:
         item = self.list.currentItem()

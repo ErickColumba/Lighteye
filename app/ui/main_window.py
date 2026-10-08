@@ -718,7 +718,7 @@ class MainWindow(QMainWindow):
         self.presets.set_photo(make_preview(self.preview, 112), self.settings)
 
     def apply_preset(self, preset) -> None:
-        if self.preview is None:
+        if self.preview is None or preset is None:
             return
         if self.crop_mode:
             self.apply_crop()
