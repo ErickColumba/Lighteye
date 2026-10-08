@@ -36,7 +36,7 @@ from app.core.loader import (
     load_image,
     make_preview,
 )
-from app.core.presets import apply_look, delete_preset, list_presets, save_preset
+from app.core.presets import apply_look, delete_preset, list_presets, look_values, save_preset
 from app.core.settings import Settings, load_sidecar, save_sidecar, sidecar_path
 from app.ui.crop_tools import CropToolbar
 from app.ui.export_dialog import ExportDialog, ExportWorker, ask_output_path
@@ -61,6 +61,7 @@ class MainWindow(QMainWindow):
         self.crop_mode = False
         self._crop_backup: Settings | None = None
         self._export_worker: ExportWorker | None = None
+        self.copied_look: dict | None = None  # ajustes copiados (sin geometría)
         self.settings = Settings()
         self.shown_rgb = None  # última imagen calculada (sRGB uint8)
         self.before_rgb = None  # la foto sin ajustes, para comparar
@@ -137,6 +138,11 @@ class MainWindow(QMainWindow):
         self.redo_action = self._add_action(edit_menu, "&Rehacer", "Ctrl+Shift+Z", self.redo)
         self.redo_action.setShortcuts([QKeySequence("Ctrl+Shift+Z"), QKeySequence("Ctrl+Y")])
         edit_menu.addSeparator()
+        self.copy_action = self._add_action(edit_menu, "&Copiar ajustes", "Ctrl+Shift+C", self.copy_look)
+        self.paste_action = self._add_action(edit_menu, "&Pegar ajustes", "Ctrl+Shift+V", self.paste_look)
+        self.copy_action.setEnabled(False)
+        self.paste_action.setEnabled(False)
+        edit_menu.addSeparator()
         self._add_action(edit_menu, "R&establecer todos los ajustes", "Ctrl+R", self.reset_all)
         edit_menu.addSeparator()
         self.crop_action = self._add_action(edit_menu, "Re&cortar y enderezar", "C", self.toggle_crop)
@@ -202,6 +208,8 @@ class MainWindow(QMainWindow):
         self.panel.setEnabled(True)
         self.presets.setEnabled(True)
         self.export_action.setEnabled(True)
+        self.copy_action.setEnabled(True)
+        self.paste_action.setEnabled(self.copied_look is not None)
         rgb = to_display_u8(self.base_preview)
         self.before_rgb = rgb
         self._set_before(False)
@@ -432,6 +440,27 @@ class MainWindow(QMainWindow):
         if self.histogram.show_clipping:
             rgb = clipping_overlay(rgb)
         self.viewer.set_image(rgb)
+
+    # --- Copiar / pegar ajustes ------------------------------------------------
+
+    def copy_look(self) -> None:
+        if self.preview is None:
+            return
+        self._commit_history()
+        self.copied_look = look_values(self.settings)
+        self.paste_action.setEnabled(True)
+        n = len(self.copied_look)
+        self.statusBar().showMessage(f"Ajustes copiados ({n} cambiados, sin recorte ni giros)", 4000)
+
+    def paste_look(self) -> None:
+        if self.preview is None or self.copied_look is None:
+            return
+        if self.crop_mode:
+            self.apply_crop()
+        self._commit_history()
+        self._apply_settings(apply_look(self.settings, self.copied_look))
+        self._commit_history()
+        self.statusBar().showMessage("Ajustes pegados", 3000)
 
     # --- Presets ----------------------------------------------------------------
 
