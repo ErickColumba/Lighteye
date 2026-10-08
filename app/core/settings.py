@@ -49,6 +49,13 @@ PARAMS: list[Param] = [
     Param("saturation", "Saturación", "Color", -100, 100),
 ]
 
+PARAMS += [
+    Param("sharpen", "Nitidez", "Detalle", 0, 100),
+    Param("nr_luma", "Reducción de ruido", "Detalle", 0, 100),
+    Param("nr_color", "Ruido de color", "Detalle", 0, 100),
+    Param("clarity", "Claridad", "Detalle", -100, 100),
+]
+
 # HSL por color: (clave, nombre, centro del rango de tono en grados).
 HSL_COLORS = [
     ("red", "Rojo", 0), ("orange", "Naranja", 30), ("yellow", "Amarillo", 60),

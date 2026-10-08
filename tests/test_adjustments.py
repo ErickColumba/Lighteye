@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 import pytest
 
@@ -248,3 +249,51 @@ def test_hsl_luminance_and_hue_shift():
     assert luminance(darker) < luminance(blue[0, 0])
     shifted = adj.hsl(blue, *_hsl_values(hsl_h_blue=100))[0, 0]
     assert shifted[0] > blue[0, 0, 0] + 0.05  # hacia el morado: más rojo
+
+
+# --- Detalle ------------------------------------------------------------------
+
+def _edge_image():
+    x = np.full((64, 64, 3), 0.1, np.float32)
+    x[:, 32:] = 0.5
+    return x
+
+
+def test_detail_zero_is_identity(img):
+    assert np.allclose(adj.sharpen(img, 0), img, atol=1e-5)
+    assert np.allclose(adj.clarity(img, 0), img, atol=1e-5)
+    assert np.array_equal(adj.noise_reduction(img, 0, 0), img)
+
+
+def test_sharpen_increases_edge_contrast():
+    x = cv2.GaussianBlur(_edge_image(), (0, 0), 1.5)
+    out = adj.sharpen(x, 100)
+    assert out[:, 29, 0].mean() < x[:, 29, 0].mean()  # lado oscuro, más oscuro
+    assert out[:, 34, 0].mean() > x[:, 34, 0].mean()  # lado claro, más claro
+
+
+def test_clarity_increases_local_contrast():
+    x = _edge_image()
+    assert np.ptp(adj.clarity(x, 100)) > np.ptp(x)
+    assert np.ptp(adj.clarity(x, -100)) < np.ptp(x)
+
+
+def test_noise_reduction_reduces_noise_but_keeps_edges():
+    rng = np.random.default_rng(1)
+    clean = _edge_image()
+    noisy = np.clip(clean * (1 + rng.normal(0, 0.08, clean.shape)), 0, None).astype(np.float32)
+    out = adj.noise_reduction(noisy, 100, 100)
+    flat = np.s_[:, 4:24]
+    assert out[flat].std() < noisy[flat].std() * 0.6
+    # El borde sigue ahí.
+    assert out[:, 40:].mean() - out[:, :24].mean() > 0.3
+
+
+def test_color_noise_reduction_only_touches_chroma():
+    rng = np.random.default_rng(2)
+    grey = np.full((64, 64, 3), 0.3, np.float32)
+    noisy = (grey + rng.normal(0, 0.03, grey.shape)).astype(np.float32)
+    out = adj.noise_reduction(noisy, 0, 100)
+    chroma = lambda im: (im - luminance(im)[..., None]).std()
+    assert chroma(out) < chroma(noisy) * 0.5
+    assert np.allclose(luminance(out), luminance(noisy), atol=1e-4)

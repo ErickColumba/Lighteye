@@ -14,12 +14,16 @@ from app.core.settings import HSL_KEYS, Settings
 STEPS = [
     (("temperature", "tint"), adj.white_balance),
     (("exposure",), adj.exposure),
+    (("nr_luma", "nr_color"), adj.noise_reduction),
     (("highlights", "shadows", "whites", "blacks"), adj.tones),
     (("contrast",), adj.contrast),
     (("curves",), adj.curves),
     (tuple(HSL_KEYS), adj.hsl),
     (("vibrance",), adj.vibrance),
     (("saturation",), adj.saturation),
+    (("clarity",), adj.clarity),
+    # Nitidez de salida: al final, sobre la imagen ya terminada.
+    (("sharpen",), adj.sharpen),
 ]
 
 

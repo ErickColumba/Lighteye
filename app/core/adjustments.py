@@ -21,6 +21,7 @@ from app.core.color import (
     to_linear_fast,
     to_srgb_fast,
 )
+from app.core.loader import PREVIEW_LONG_SIDE
 from app.core.settings import HSL_COLORS
 
 # Gris medio (18 %) en lineal: pivote para el contraste.
@@ -159,20 +160,20 @@ def saturation(img: np.ndarray, amount: float) -> np.ndarray:
 
 def vibrance(img: np.ndarray, amount: float) -> np.ndarray:
     """Satura más los colores apagados y protege los tonos de piel."""
-    mx = img.max(axis=2)
-    mn = img.min(axis=2)
+    r, g, b = cv2.split(img)  # canales contiguos: mucho más rápido que img[..., c]
+    mx = cv2.max(cv2.max(r, g), b)
+    mn = cv2.min(cv2.min(r, g), b)
     sat = (mx - mn) / (mx + 1e-6)
 
     # Tonos de piel: rojo dominante, azul mínimo y tono entre ~10° y ~50°.
-    r, g, b = img[..., 0], img[..., 1], img[..., 2]
     skin_hue = 60.0 * (g - b) / (r - b + 1e-6)
-    is_skin = (r >= g) & (g >= b) & (sat > 0.1)
-    skin = np.where(is_skin, np.clip(1.0 - np.abs(skin_hue - 28.0) / 22.0, 0.0, 1.0), 0.0)
+    skin = np.clip(1.0 - np.abs(skin_hue - 28.0) * (1 / 22.0), 0.0, 1.0)
+    skin *= (r >= g) & (g >= b) & (sat > 0.1)
 
     weight = (1.0 - sat) * (1.0 - 0.7 * skin)
-    factor = (1.0 + amount / 100.0 * weight)[..., None].astype(np.float32)
-    lum = cv2.transform(img, LUMA[None, :])[..., None]
-    out = lum + (img - lum) * factor
+    factor = 1.0 + np.float32(amount / 100.0) * weight
+    lum = cv2.transform(img, LUMA[None, :])
+    out = cv2.merge([lum + (c - lum) * factor for c in (r, g, b)])
     return np.maximum(out, 0.0, out=out)
 
 
@@ -216,4 +217,81 @@ def hsl(img: np.ndarray, *values: float) -> np.ndarray:
 
     out = to_linear_fast(cv2.cvtColor(hls, cv2.COLOR_HLS2RGB))
     out += np.maximum(img - 1.0, 0.0)
+    return out
+
+
+# --- Detalle ----------------------------------------------------------------
+#
+# Los radios se expresan en píxeles de la vista previa (lado largo de 1600 px)
+# y se escalan con el tamaño real, para que la exportación a resolución
+# completa se vea igual que la vista previa.
+
+
+def _px(img: np.ndarray, base: float) -> float:
+    # Las imágenes menores que la vista previa no se reducen: usan el radio base.
+    return base * max(1.0, max(img.shape[:2]) / PREVIEW_LONG_SIDE)
+
+
+def fast_blur(x: np.ndarray, sigma: float) -> np.ndarray:
+    """Desenfoque gaussiano; para radios grandes se calcula en una versión
+    reducida y se vuelve a ampliar (mucho más rápido y casi idéntico)."""
+    if sigma <= 6:
+        return cv2.GaussianBlur(x, (0, 0), sigma)
+    h, w = x.shape[:2]
+    f = sigma / 3.0
+    small = cv2.resize(x, (max(1, round(w / f)), max(1, round(h / f))),
+                       interpolation=cv2.INTER_AREA)
+    small = cv2.GaussianBlur(small, (0, 0), 3.0)
+    return cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
+
+
+def _perceptual_luma(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(luminancia lineal, luminancia perceptual) de la imagen."""
+    lum = np.maximum(cv2.transform(img, LUMA[None, :]), 0.0)
+    return lum, lum ** (1 / PERCEPTUAL_GAMMA)
+
+
+def _apply_luma(img: np.ndarray, lum: np.ndarray, new_p: np.ndarray) -> np.ndarray:
+    """Aplica una nueva luminancia perceptual como ganancia sobre RGB."""
+    new_lum = np.maximum(new_p, 0.0) ** PERCEPTUAL_GAMMA
+    gain = np.minimum(new_lum / np.maximum(lum, 1e-6), 8.0)
+    return img * gain[..., None]
+
+
+def sharpen(img: np.ndarray, amount: float) -> np.ndarray:
+    """Máscara de enfoque sobre la luminancia: Y + k·(Y − blur(Y))."""
+    lum, y = _perceptual_luma(img)
+    detail = y - cv2.GaussianBlur(y, (0, 0), _px(img, 1.0))
+    return _apply_luma(img, lum, y + amount / 100.0 * 1.5 * detail)
+
+
+def clarity(img: np.ndarray, amount: float) -> np.ndarray:
+    """Contraste local con radio grande, centrado en los medios tonos."""
+    lum, y = _perceptual_luma(img)
+    detail = y - fast_blur(y, _px(img, 25.0))
+    midtones = np.clip(4.0 * y * (1.0 - y), 0.0, 1.0)
+    return _apply_luma(img, lum, y + amount / 100.0 * 0.8 * detail * midtones)
+
+
+def noise_reduction(img: np.ndarray, luma: float, color: float) -> np.ndarray:
+    """Reducción de ruido de luminancia y de color, por separado.
+
+    Luminancia: se separa el detalle fino (Y − blur) y se atenúan las
+    variaciones pequeñas (ruido) conservando las grandes (bordes).
+    Color: se desenfoca solo la crominancia, a la que el ojo es poco sensible.
+    """
+    out = img
+    if color > 0:
+        c = color / 100.0
+        lum = cv2.transform(out, LUMA[None, :])[..., None]
+        chroma = fast_blur(out - lum, _px(img, 0.8 + 5.0 * c))
+        out = np.maximum(lum + chroma, 0.0)
+    if luma > 0:
+        a = luma / 100.0
+        lum, y = _perceptual_luma(out)
+        base = cv2.GaussianBlur(y, (0, 0), _px(img, 0.7 + 1.5 * a))
+        detail = y - base
+        threshold = 0.004 + 0.03 * a
+        detail *= 1.0 - np.exp(-((detail / threshold) ** 2))
+        out = _apply_luma(out, lum, base + detail)
     return out

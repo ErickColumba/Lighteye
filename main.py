@@ -4,10 +4,12 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
+from app.core.memory import tune_allocator
 from app.ui.main_window import MainWindow
 
 
 def main() -> int:
+    tune_allocator()
     app = QApplication(sys.argv)
     app.setApplicationName("Lighteye")
     app.setOrganizationName("Lighteye")
