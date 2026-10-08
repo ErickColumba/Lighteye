@@ -152,3 +152,47 @@ def test_tones_preserve_colour_ratios():
     px = np.array([[[0.2, 0.1, 0.05]]], np.float32)
     out = adj.tones(px, 0, 70, 0, 0)[0, 0]
     assert out[0] / out[1] == pytest.approx(2.0, rel=1e-4)
+
+
+# --- Curvas -------------------------------------------------------------------
+
+from app.core.curves import monotone_cubic  # noqa: E402
+from app.core.settings import CURVE_CHANNELS, IDENTITY_CURVE  # noqa: E402
+
+IDENTITY_CURVES = {ch: IDENTITY_CURVE for ch in CURVE_CHANNELS}
+
+
+def test_identity_curves_change_nothing(img):
+    assert np.allclose(adj.curves(img, IDENTITY_CURVES), img, atol=2e-4)
+
+
+def test_monotone_cubic_passes_through_points_without_overshoot():
+    pts = ((0.0, 0.0), (0.25, 0.1), (0.5, 0.5), (0.75, 0.95), (1.0, 1.0))
+    x = np.linspace(0, 1, 2001)
+    y = monotone_cubic(pts, x)
+    for px, py in pts:
+        assert monotone_cubic(pts, np.array([px]))[0] == pytest.approx(py)
+    assert np.all(np.diff(y) >= -1e-12)
+    assert y.min() >= 0 and y.max() <= 1
+
+
+def test_curve_is_flat_outside_end_points():
+    pts = ((0.2, 0.1), (0.8, 0.9))
+    y = monotone_cubic(pts, np.array([0.0, 0.1, 0.9, 1.0]))
+    assert np.allclose(y, [0.1, 0.1, 0.9, 0.9])
+
+
+def test_red_curve_only_changes_red(img):
+    c = dict(IDENTITY_CURVES, r=((0.0, 0.0), (0.5, 0.7), (1.0, 1.0)))
+    out = adj.curves(img, c)
+    assert np.all(out[..., 0] >= img[..., 0] - 1e-4)
+    assert np.allclose(out[..., 1:], img[..., 1:], atol=2e-4)
+
+
+def test_settings_normalize_curves():
+    from app.core.settings import Settings
+    s = Settings({"curves": {"rgb": [[1, 1], [0, 0], [0.5, 0.6]]}})
+    assert s["curves"]["rgb"] == ((0.0, 0.0), (0.5, 0.6), (1.0, 1.0))
+    assert s["curves"]["r"] == IDENTITY_CURVE
+    assert not s.is_default("curves")
+    assert Settings({"curves": "basura"}) == Settings()

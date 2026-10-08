@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.settings import GROUPS, PARAMS, Param, Settings
+from app.ui.curve_editor import CurveEditor
 
 
 class ResettableSlider(QSlider):
@@ -170,8 +171,17 @@ class AdjustmentPanel(QScrollArea):
             self.sections[group] = section
             layout.addWidget(section)
 
+        self.curve_editor = CurveEditor()
+        self.curve_editor.changed.connect(lambda c: self.changed.emit("curves", c))
+        self._add_custom("Curvas", self.curve_editor)
+
         layout.addStretch(1)
         self.setWidget(content)
+
+    def _add_custom(self, group: str, widget: QWidget) -> None:
+        section = self.sections[group]
+        section.body_layout.addWidget(widget)
+        section.setVisible(True)
 
     def _fill_section(self, section: CollapsibleSection, params: list[Param]) -> None:
         tabs: dict[str, QGridLayout] = {}
@@ -198,3 +208,4 @@ class AdjustmentPanel(QScrollArea):
         """Refleja unos ajustes en los sliders sin emitir `changed`."""
         for key, row in self.rows.items():
             row.set_value(settings[key])
+        self.curve_editor.set_curves(settings["curves"])

@@ -10,7 +10,8 @@ from functools import lru_cache
 import cv2
 import numpy as np
 
-from app.core.color import LUMA, LUT_SIZE, lut_domain, lut_index
+from app.core import curves as curve_math
+from app.core.color import LUMA, LUT_SIZE, linear_to_srgb, lut_domain, lut_index, srgb_to_linear
 
 # Gris medio (18 %) en lineal: pivote para el contraste.
 MID_GREY = 0.18
@@ -111,6 +112,28 @@ def contrast(img: np.ndarray, amount: float) -> np.ndarray:
     """
     out = _contrast_lut(float(amount))[lut_index(img)]
     # Lo que pasa de 1.0 se suma tal cual: la curva vale 1 en 1, así que es continuo.
+    out += np.maximum(img - 1.0, 0.0)
+    return out
+
+
+@lru_cache(maxsize=8)
+def _curve_luts(master: tuple, red: tuple, green: tuple, blue: tuple) -> list[np.ndarray]:
+    """Una LUT lineal → lineal por canal: curva del canal ∘ curva maestra."""
+    p = linear_to_srgb(lut_domain())
+    idx = lambda v: np.clip(v * (LUT_SIZE - 1) + 0.5, 0, LUT_SIZE - 1).astype(np.int64)
+    after_master = curve_math.sample(master, LUT_SIZE)[idx(p)]
+    return [srgb_to_linear(curve_math.sample(ch, LUT_SIZE)[idx(after_master)])
+            for ch in (red, green, blue)]
+
+
+def curves(img: np.ndarray, curves: dict) -> np.ndarray:
+    """Curvas RGB (maestra) y por canal, definidas en espacio sRGB (como se ven)."""
+    luts = _curve_luts(curves["rgb"], curves["r"], curves["g"], curves["b"])
+    idx = lut_index(img)
+    out = np.empty_like(img)
+    for c in range(3):
+        out[..., c] = luts[c][idx[..., c]]
+    # Por encima del blanco se conserva el exceso, como en el contraste.
     out += np.maximum(img - 1.0, 0.0)
     return out
 

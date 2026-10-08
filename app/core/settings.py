@@ -34,7 +34,7 @@ def _toggle(key: str, label: str, group: str) -> Param:
 
 
 # Grupos en el orden en que aparecen en el panel.
-GROUPS = ["Luz", "Color", "Detalle", "Efectos"]
+GROUPS = ["Luz", "Curvas", "Color", "Detalle", "Efectos"]
 
 PARAMS: list[Param] = [
     Param("exposure", "Exposición", "Luz", -4.0, 4.0, step=0.01),
@@ -54,7 +54,9 @@ PARAMS_BY_KEY = {p.key: p for p in PARAMS}
 IDENTITY_CURVE = ((0.0, 0.0), (1.0, 1.0))
 CURVE_CHANNELS = ("rgb", "r", "g", "b")
 
-EXTRA_DEFAULTS: dict = {}
+EXTRA_DEFAULTS: dict = {
+    "curves": {ch: IDENTITY_CURVE for ch in CURVE_CHANNELS},
+}
 
 
 class Settings:

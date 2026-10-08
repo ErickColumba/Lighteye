@@ -16,6 +16,7 @@ STEPS = [
     (("exposure",), adj.exposure),
     (("highlights", "shadows", "whites", "blacks"), adj.tones),
     (("contrast",), adj.contrast),
+    (("curves",), adj.curves),
     (("saturation",), adj.saturation),
 ]
 
