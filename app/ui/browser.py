@@ -187,11 +187,17 @@ class FilmStrip(QListWidget):
             self.open_requested.emit(item.data(Qt.ItemDataRole.UserRole))
 
     def _menu(self, pos) -> None:
+        clicked = self.itemAt(pos)
+        if clicked is not None and not clicked.isSelected():
+            # Clic derecho sobre una foto no seleccionada: se actúa sobre ella.
+            self.setCurrentItem(clicked)
         selected = self.selected_paths()
         if not selected:
             return
         n = len(selected)
+        source = clicked.data(Qt.ItemDataRole.UserRole) if clicked else selected[0]
         menu = QMenu(self)
+        copy = menu.addAction(f"Copiar ajustes de {Path(source).name}")
         paste = menu.addAction(f"Pegar ajustes ({n})")
         paste.setEnabled(self.can_paste())
         presets = menu.addMenu(f"Aplicar preset ({n})")
@@ -206,7 +212,9 @@ class FilmStrip(QListWidget):
         chosen: QAction | None = menu.exec(self.viewport().mapToGlobal(pos))
         if chosen is None:
             return
-        if chosen is paste:
+        if chosen is copy:
+            self.batch_requested.emit("copy", [source])
+        elif chosen is paste:
             self.batch_requested.emit("paste", selected)
         elif chosen is reset:
             self.batch_requested.emit("reset", selected)

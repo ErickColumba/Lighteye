@@ -106,6 +106,8 @@ class MainWindow(QMainWindow):
         center_layout.addWidget(self.viewer, 1)
         center_layout.addWidget(self.view_bar)
         self.setCentralWidget(center)
+        self.viewer.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.viewer.customContextMenuRequested.connect(self._viewer_menu)
 
         self.panel = AdjustmentPanel()
         self.panel.setEnabled(False)
@@ -598,6 +600,15 @@ class MainWindow(QMainWindow):
             rgb = clipping_overlay(rgb)
         self.viewer.set_image(rgb)
 
+    def _viewer_menu(self, pos) -> None:
+        if self.preview is None or self.crop_mode:
+            return
+        menu = QMenu(self)
+        for a in (self.copy_action, self.paste_action, None, self.reset_action, None,
+                  self.crop_action, self.export_action):
+            menu.addSeparator() if a is None else menu.addAction(a)
+        menu.exec(self.viewer.viewport().mapToGlobal(pos))
+
     # --- Copiar / pegar ajustes ------------------------------------------------
 
     def copy_look(self) -> None:
@@ -608,6 +619,16 @@ class MainWindow(QMainWindow):
         self.paste_action.setEnabled(True)
         n = len(self.copied_look)
         self.statusBar().showMessage(f"Ajustes copiados ({n} cambiados, sin recorte ni giros)", 4000)
+
+    def copy_look_from(self, path: str) -> None:
+        """Copia los ajustes de una foto de la tira (abierta o no)."""
+        if self.loaded is not None and Path(path) == self.loaded.path:
+            self.copy_look()
+            return
+        self.copied_look = look_values(load_sidecar(path) or Settings())
+        self.paste_action.setEnabled(self.preview is not None)
+        self.statusBar().showMessage(
+            f"Ajustes de {Path(path).name} copiados ({len(self.copied_look)} cambiados)", 4000)
 
     def paste_look(self) -> None:
         if self.preview is None or self.copied_look is None:
@@ -622,6 +643,9 @@ class MainWindow(QMainWindow):
     # --- Acciones sobre varias fotos ---------------------------------------------
 
     def _batch_action(self, action: str, items: list) -> None:
+        if action == "copy":
+            self.copy_look_from(items[0])
+            return
         if action == "export":
             self.export_batch(items)
             return
