@@ -30,7 +30,7 @@ class Param:
 
 
 # Grupos en el orden en que aparecen en el panel.
-GROUPS = ["Rostros (IA)", "Luz", "Curvas", "Color", "HSL", "LUT", "Detalle", "Efectos"]
+GROUPS = ["Rostros (IA)", "Retoque (IA)", "Luz", "Curvas", "Color", "HSL", "LUT", "Detalle", "Efectos"]
 
 PARAMS: list[Param] = [
     Param("exposure", "Exposición", "Luz", -4.0, 4.0, step=0.01),
@@ -88,7 +88,15 @@ PARAMS += [
           kind="toggle"),
     Param("face_fidelity", "Fidelidad (CodeFormer)", "Rostros (IA)", 0, 100, 70),
 ]
-FACE_KEYS = ("face_restore", "face_codeformer", "face_fidelity")
+PARAMS += [
+    Param("skin_smooth", "Suavizar piel", "Retoque (IA)", 0, 100),
+    Param("eyes_brighten", "Iluminar ojos", "Retoque (IA)", 0, 100),
+    Param("lips_saturation", "Color de labios", "Retoque (IA)", -100, 100),
+    Param("hair_shine", "Brillo del cabello", "Retoque (IA)", 0, 100),
+]
+FACE_KEYS = ("face_restore", "face_codeformer", "face_fidelity",
+             "skin_smooth", "eyes_brighten", "lips_saturation", "hair_shine")
+RETOUCH_KEYS = ("skin_smooth", "eyes_brighten", "lips_saturation", "hair_shine")
 
 # HSL por color: (clave, nombre, centro del rango de tono en grados).
 HSL_COLORS = [

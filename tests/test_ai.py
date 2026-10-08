@@ -128,3 +128,45 @@ def test_render_full_pastes_faces_only_when_enabled():
     assert render_full(img, Settings(), faces=[face]).max() == 0
     out = render_full(img, Settings({"face_restore": 100}), faces=[face])
     assert out[100, 100, 0] > 0.9
+
+
+# --- Retoque con máscaras (sin modelos: análisis sintético) ----------------------
+
+def _fake_parse():
+    """Cara de 512 px en (0,0)–(512,512): mitad izquierda piel, un 'ojo' y pelo arriba."""
+    from app.ai.faces import FaceParse
+
+    labels = np.zeros((512, 512), np.uint8)
+    labels[200:512, 0:256] = 1  # piel
+    labels[250:280, 300:360] = 4  # ojo
+    labels[0:150, :] = 17  # pelo
+    return FaceParse(labels, np.array([[1, 0, 0], [0, 1, 0]], np.float32))
+
+
+def test_retouch_only_changes_its_zone():
+    from app.ai.retouch import apply_retouch
+    from app.core.settings import Settings
+
+    rng = np.random.default_rng(0)
+    img = (0.2 + 0.1 * rng.random((512, 512, 3))).astype(np.float32)
+    parse = [_fake_parse()]
+    assert apply_retouch(img, parse, Settings()) is img
+
+    smooth = apply_retouch(img, parse, Settings({"skin_smooth": 100}))
+    assert smooth[300:500, 20:230].std() < img[300:500, 20:230].std() * 0.8  # piel más lisa
+    assert np.allclose(smooth[300:500, 320:500], img[300:500, 320:500])  # fuera: intacto
+
+    eyes = apply_retouch(img, parse, Settings({"eyes_brighten": 100}))
+    assert eyes[265, 330].mean() > img[265, 330].mean() * 1.3
+    assert np.allclose(eyes[400, 450], img[400, 450])
+
+
+def test_retouch_follows_transform():
+    from app.ai.retouch import apply_retouch
+    from app.core.settings import Settings
+
+    img = np.full((256, 256, 3), 0.2, np.float32)
+    half = np.diag([0.5, 0.5, 1.0])  # la imagen es la foto a la mitad de tamaño
+    out = apply_retouch(img, [_fake_parse()], Settings({"eyes_brighten": 100}), half)
+    assert out[132, 165].mean() > 0.25  # el ojo (265, 330) queda en (132, 165)
+    assert np.allclose(out[60, 60], 0.2)

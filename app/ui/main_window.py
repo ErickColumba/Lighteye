@@ -75,8 +75,9 @@ class MainWindow(QMainWindow):
         self._source_sig = None  # geometría con la que se calculó self.preview
         self._geo_preview = None  # vista previa con la geometría, sin rostros
         self._faces: dict[str, list] = {}  # rostros restaurados por clave de caché
-        self._faces_sig = None
+        self._parses: dict = {}  # análisis facial (máscaras) por foto
         self._face_worker = None
+        self._parse_worker = None
         self.crop_mode = False
         self._crop_backup: Settings | None = None
         self._export_worker: ExportWorker | None = None
@@ -332,7 +333,7 @@ class MainWindow(QMainWindow):
         self.base_preview = make_preview(loaded.image)
         self.preview = self._geo_preview = self.base_preview
         self._faces.clear()
-        self._faces_sig = None
+        self._parses.clear()
         self._source_sig = geometry_signature(Settings())
         # Si la foto ya se había editado, se recuperan sus ajustes.
         self.settings = load_sidecar(loaded.path) or Settings()
@@ -441,7 +442,7 @@ class MainWindow(QMainWindow):
             if not draft:
                 self._settle_timer.stop()
             self._sync_source()
-            self.renderer.request(self.preview, self.settings, draft=draft)
+            self.renderer.request(self.preview, self.settings, draft=draft, prep=self._source_prep())
 
     def _sync_source(self) -> None:
         """Recalcula la imagen de origen si cambió la geometría.
@@ -464,7 +465,7 @@ class MainWindow(QMainWindow):
                 finally:
                     QApplication.restoreOverrideCursor()
             self._source_sig = sig
-        self._apply_faces_to_source()
+            self.preview = self._geo_preview
 
     # --- Rostros (IA) -------------------------------------------------------------
 
@@ -476,39 +477,47 @@ class MainWindow(QMainWindow):
         return cache_key(self.loaded.path, bool(self.settings["face_codeformer"]),
                          self.settings["face_fidelity"] / 100)
 
-    def _apply_faces_to_source(self) -> None:
-        """self.preview = imagen geométrica + rostros restaurados (si procede).
+    def _source_prep(self):
+        """Trabajo de IA sobre el origen (pegar rostros, retoque), para que el
+        renderizador lo haga en segundo plano: (clave, función) o None."""
+        from app.core.settings import RETOUCH_KEYS
 
-        Las caras se calculan una vez a resolución completa (en segundo plano)
-        y aquí solo se pegan, transformadas al recorte y tamaño de la vista
-        previa: es instantáneo, también al mover la intensidad.
-        """
-        key = self._face_key()
-        faces = self._faces.get(key) if key else None
-        if key and faces is None:
-            self._request_faces(key)
+        face_key = self._face_key()
+        faces = self._faces.get(face_key) if face_key else None
+        if face_key and faces is None:
+            self._request_faces(face_key)
+        retouch = {k: self.settings[k] for k in RETOUCH_KEYS if not self.settings.is_default(k)}
+        parses = None
+        if retouch and self.loaded is not None:
+            parses = self._parses.get(self.loaded.path)
+            if parses is None:
+                self._request_parses()
         strength = self.settings["face_restore"] / 100
-        sig = (self._source_sig, key if faces else None, strength if faces else 0)
-        if sig == self._faces_sig:
-            return
-        self._faces_sig = sig
-        if not faces:
-            self.preview = self._geo_preview
-            return
+        if not faces and not parses:
+            return None
+
         from app.ai.faces import paste_faces
+        from app.ai.retouch import apply_retouch
         from app.core.geometry import geometry_matrix
 
         h, w = self.loaded.image.shape[:2]
         geo = geometry_matrix(w, h, self.settings, with_crop=not self.crop_mode)
-        # De la salida de la geometría a resolución completa → vista previa.
         shown = self.settings
         if self.crop_mode:  # en modo recorte se ve la foto entera (sin recortar)
             shown = self.settings.copy()
             shown["crop"] = FULL_CROP
         fw, fh = final_size(w, h, shown)
-        ph, pw = self._geo_preview.shape[:2]
-        to_preview = np.diag([pw / fw, ph / fh, 1.0])
-        self.preview = paste_faces(self._geo_preview, faces, strength, to_preview @ geo)
+        ph, pw = self.preview.shape[:2]
+        transform = np.diag([pw / fw, ph / fh, 1.0]) @ geo
+        snapshot = self.settings.copy()
+
+        def prepare(image, faces=faces, parses=parses):
+            out = paste_faces(image, faces, strength, transform) if faces else image
+            return apply_retouch(out, parses, snapshot, transform) if parses else out
+
+        key = (id(self.preview), face_key if faces else None, strength if faces else 0,
+               tuple(sorted(retouch.items())) if parses else None, self.crop_mode)
+        return key, prepare
 
     def _request_faces(self, key: str) -> None:
         from app.ai.faces import load_cached
@@ -546,6 +555,36 @@ class MainWindow(QMainWindow):
         self._faces[key] = faces
         self._clear_face_worker()
         self._report_faces(faces)
+        self._request_render()
+
+    def _request_parses(self) -> None:
+        if self._parse_worker is not None or self.loaded is None:
+            return
+        from app.ai import runtime
+        from app.ui.ai_worker import ParseWorker
+
+        if not (runtime.model_available("bisenet") and runtime.model_available("yunet")):
+            self.statusBar().showMessage("Retoque no disponible: faltan PyTorch o los modelos "
+                                         "(python tools/download_models.py)", 8000)
+            return
+        worker = ParseWorker(self.loaded.path, self.loaded.image, self)
+        worker.done.connect(self._parses_ready)
+        worker.failed.connect(lambda msg: (self.statusBar().showMessage(f"Error en el análisis facial: {msg}",
+                                                                        8000), self._clear_parse_worker()))
+        self._parse_worker = worker
+        self.statusBar().showMessage("Analizando el rostro (piel, ojos, labios, pelo)…")
+        worker.start()
+
+    def _clear_parse_worker(self) -> None:
+        if self._parse_worker is not None:
+            self._parse_worker.deleteLater()
+        self._parse_worker = None
+
+    def _parses_ready(self, path: str, parses: list) -> None:
+        self._parses[Path(path)] = parses
+        self._clear_parse_worker()
+        self.statusBar().showMessage("No se encontraron rostros en la foto" if not parses else
+                                     f"Rostros analizados: {len(parses)}", 5000)
         self._request_render()
 
     def _report_faces(self, faces: list) -> None:
@@ -922,8 +961,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._commit_history()
-        if self._face_worker is not None:
-            self._face_worker.wait()
+        for w in (self._face_worker, self._parse_worker):
+            if w is not None:
+                w.wait()
         worker = self._export_worker
         if worker is not None and worker.isRunning():
             worker.cancel()

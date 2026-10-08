@@ -176,7 +176,14 @@ def export_image(src: Path, image: np.ndarray, settings: Settings, out_path: Pat
 
         faces = faces_for(Path(src), image, bool(settings["face_codeformer"]),
                           settings["face_fidelity"] / 100)
-    linear = render_full(image, settings, step, faces)
+    parses = None
+    from app.core.settings import RETOUCH_KEYS
+
+    if any(not settings.is_default(k) for k in RETOUCH_KEYS):
+        from app.ai.faces import parses_for
+
+        parses = parses_for(Path(src), image)
+    linear = render_full(image, settings, step, faces, parses)
     if upscaling:
         linear = ai_upscale(linear, options.ai_scale,
                             lambda f: progress(share + 0.5 * f) if progress else None)

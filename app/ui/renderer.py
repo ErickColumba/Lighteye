@@ -38,6 +38,19 @@ class _State:
         self.draft_cache = PipelineCache()
         self.draft_for: np.ndarray | None = None
         self.draft_image: np.ndarray | None = None
+        # Origen preparado (rostros + retoque): se reutiliza mientras no cambie,
+        # así la caché del pipeline sigue sirviendo al mover otros sliders.
+        self.prep_key = None
+        self.prep_image: np.ndarray | None = None
+
+    def prepared(self, image: np.ndarray, prep) -> np.ndarray:
+        if prep is None:
+            return image
+        key, fn = prep
+        if self.prep_key != key or self.prep_image is None:
+            self.prep_image = fn(image)
+            self.prep_key = key
+        return self.prep_image
 
     def draft_of(self, image: np.ndarray) -> np.ndarray:
         if self.draft_for is not image:
@@ -50,8 +63,9 @@ class _State:
 
 class _Worker(QRunnable):
     def __init__(self, generation: int, image: np.ndarray, settings: Settings,
-                 draft: bool, state: _State):
+                 draft: bool, state: _State, prep=None):
         super().__init__()
+        self.prep = prep
         self.generation = generation
         self.image = image
         self.settings = settings
@@ -61,6 +75,7 @@ class _Worker(QRunnable):
 
     def run(self):
         try:
+            self.image = self.state.prepared(self.image, self.prep)
             if self.draft:
                 small = self.state.draft_of(self.image)
                 rgb = to_display_u8(process(small, self.settings, cache=self.state.draft_cache,
@@ -92,10 +107,13 @@ class PreviewRenderer(QObject):
         self._pending: _Worker | None = None
         self._state = _State()
 
-    def request(self, image: np.ndarray, settings: Settings, draft: bool = False) -> None:
+    def request(self, image: np.ndarray, settings: Settings, draft: bool = False,
+                prep=None) -> None:
+        """`prep` = (clave, función imagen → imagen) que se aplica al origen
+        antes del pipeline, en el hilo de trabajo (p. ej. rostros y retoque)."""
         self._generation += 1
         # Copia de settings: la interfaz puede seguir cambiándolos mientras tanto.
-        self._pending = _Worker(self._generation, image, settings.copy(), draft, self._state)
+        self._pending = _Worker(self._generation, image, settings.copy(), draft, self._state, prep)
         self._start_pending()
 
     def cancel(self) -> None:

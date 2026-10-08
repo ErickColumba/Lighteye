@@ -198,3 +198,69 @@ def faces_for(photo: Path, linear_full: np.ndarray, use_codeformer: bool, fideli
     except OSError:
         pass
     return faces
+
+
+# --- Análisis facial (BiSeNet): máscaras de piel, ojos, labios, pelo -------------
+
+
+@dataclass
+class FaceParse:
+    labels: np.ndarray  # (512, 512) uint8, clases de bisenet.CLASSES
+    matrix: np.ndarray  # (2, 3) afín: foto original → recorte de 512
+
+
+def parse_faces(srgb: np.ndarray, progress=None, device: str | None = None) -> list[FaceParse]:
+    """Detecta las caras y etiqueta cada píxel (piel, ojos, pelo…)."""
+    from app.ai import bisenet
+
+    points = detect_faces(srgb)
+    results = []
+    if not points:
+        return results
+    device = device or runtime.pick_device("bisenet")
+    net = bisenet.load(str(MODELS["bisenet"].path), device)
+    try:
+        for i, pts in enumerate(points):
+            matrix, _ = cv2.estimateAffinePartial2D(pts, TEMPLATE, method=cv2.LMEDS)
+            if matrix is None:
+                continue
+            crop = cv2.warpAffine(srgb, matrix, (FACE_SIZE, FACE_SIZE), flags=cv2.INTER_LINEAR,
+                                  borderMode=cv2.BORDER_REFLECT101)
+            results.append(FaceParse(bisenet.parse(net, crop), matrix.astype(np.float32)))
+            if progress:
+                progress((i + 1) / len(points))
+    finally:
+        del net
+        runtime.release()
+    return results
+
+
+def parse_cache_key(photo: Path) -> str:
+    st = Path(photo).stat()
+    raw = f"{Path(photo).resolve()}|{st.st_mtime_ns}|{st.st_size}|bisenet"
+    return hashlib.sha1(raw.encode()).hexdigest()
+
+
+def parses_for(photo: Path, linear_full: np.ndarray, progress=None) -> list[FaceParse]:
+    """Análisis facial de una foto: de la caché o calculándolo."""
+    from app.core.color import to_srgb_fast
+
+    path = _cache_dir() / f"parse-{parse_cache_key(photo)}.npz"
+    if path.is_file():
+        try:
+            data = np.load(path)
+            return [FaceParse(data[f"labels{i}"], data[f"matrix{i}"]) for i in range(int(data["count"]))]
+        except (OSError, ValueError, KeyError):
+            pass
+    parses = parse_faces(to_srgb_fast(linear_full), progress)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        arrays = {"count": np.array(len(parses))}
+        for i, p in enumerate(parses):
+            arrays[f"labels{i}"], arrays[f"matrix{i}"] = p.labels, p.matrix
+        tmp = path.with_name(path.stem + ".tmp.npz")
+        np.savez_compressed(tmp, **arrays)
+        tmp.replace(path)
+    except OSError:
+        pass
+    return parses

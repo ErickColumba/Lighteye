@@ -121,13 +121,21 @@ def process(img: np.ndarray, settings: Settings, progress=None,
     return out.astype(np.float32, copy=False)
 
 
-def render_full(img: np.ndarray, settings: Settings, progress=None, faces=None) -> np.ndarray:
-    """Geometría + rostros restaurados (si hay) + ajustes, a resolución completa."""
+def render_full(img: np.ndarray, settings: Settings, progress=None, faces=None,
+                parses=None) -> np.ndarray:
+    """Geometría + rostros restaurados y retoque (si hay) + ajustes, a
+    resolución completa."""
     out = apply_geometry(img, settings)
-    if faces and settings["face_restore"] > 0:
-        from app.ai.faces import paste_faces
+    if faces or parses:
         from app.core.geometry import geometry_matrix
 
         m = geometry_matrix(img.shape[1], img.shape[0], settings)
-        out = paste_faces(out, faces, settings["face_restore"] / 100, m)
+        if faces and settings["face_restore"] > 0:
+            from app.ai.faces import paste_faces
+
+            out = paste_faces(out, faces, settings["face_restore"] / 100, m)
+        if parses:
+            from app.ai.retouch import apply_retouch
+
+            out = apply_retouch(out, parses, settings, m)
     return process(out, settings, progress)
