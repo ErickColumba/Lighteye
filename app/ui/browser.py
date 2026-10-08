@@ -9,11 +9,13 @@ import threading
 from collections import deque
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QThread, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QImage, QPixmap
+from PySide6.QtCore import QRectF, QSize, Qt, QThread, Signal
+from PySide6.QtGui import QAction, QColor, QIcon, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QAbstractItemView, QListView, QListWidget, QListWidgetItem, QMenu
 
+from app.core.settings import Settings, load_sidecar
 from app.core.thumbnails import list_images, render_thumbnail
+from app.ui.icons import pixmap as icon_pixmap
 from app.ui.viewer import array_to_qimage
 
 ICON = QSize(150, 100)
@@ -22,7 +24,7 @@ ICON = QSize(150, 100)
 class ThumbnailWorker(QThread):
     """Genera miniaturas en segundo plano, en el orden en que se piden."""
 
-    ready = Signal(str, QImage)
+    ready = Signal(str, QImage, bool)  # ruta, miniatura, ¿tiene ediciones?
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -59,11 +61,30 @@ class ThumbnailWorker(QThread):
                 self._wake.wait()
                 self._wake.clear()
                 continue
+            settings = load_sidecar(path) or Settings()
             try:
-                image = array_to_qimage(render_thumbnail(path))
+                image = array_to_qimage(render_thumbnail(path, settings=settings))
             except Exception:  # noqa: BLE001 — archivo dañado o ilegible
                 image = QImage()
-            self.ready.emit(path, image)
+            self.ready.emit(path, image, settings != Settings())
+
+
+def with_edited_badge(image: QImage) -> QPixmap:
+    """Miniatura con una insignia redonda (icono de ajustes) en la esquina."""
+    pix = QPixmap.fromImage(image)
+    size = max(18, round(min(pix.width(), pix.height()) * 0.2))
+    margin = max(4, size // 4)
+    box = QRectF(pix.width() - size - margin, margin, size, size)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(QPen(QColor(255, 255, 255, 230), max(1.5, size / 14)))
+    p.setBrush(QColor(37, 99, 235, 235))  # azul
+    p.drawEllipse(box)
+    inner = round(size * 0.62)
+    p.drawPixmap(round(box.center().x() - inner / 2), round(box.center().y() - inner / 2),
+                 icon_pixmap("edited", "#ffffff", inner))
+    p.end()
+    return pix
 
 
 def _placeholder() -> QIcon:
@@ -150,10 +171,14 @@ class FilmStrip(QListWidget):
         i = paths.index(str(path)) + step
         return paths[i] if 0 <= i < len(paths) else None
 
-    def _thumbnail_ready(self, path: str, image: QImage) -> None:
+    def _thumbnail_ready(self, path: str, image: QImage, edited: bool) -> None:
         item = self._items.get(path)
-        if item is not None and not image.isNull():
-            item.setIcon(QIcon(QPixmap.fromImage(image)))
+        if item is None:
+            return
+        if not image.isNull():
+            pix = with_edited_badge(image) if edited else QPixmap.fromImage(image)
+            item.setIcon(QIcon(pix))
+        item.setToolTip(f"{path}\n{'Editada' if edited else 'Sin editar'}")
 
     # --- Interacción ---------------------------------------------------------
 

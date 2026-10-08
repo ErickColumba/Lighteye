@@ -40,6 +40,8 @@ _SHAPES = {
     "compare": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 2v20"/>'
                '<path d="M8 10l-2 2 2 2M16 10l2 2-2 2"/>',
     "menu": '<path d="M4 6h16M4 12h16M4 18h16"/>',
+    "edited": '<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/>'
+              '<circle cx="8" cy="17" r="2"/>',
 }
 
 _TEMPLATE = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" '
@@ -64,6 +66,11 @@ def _icon(name: str, color: str) -> QIcon:
     for size in (16, 24, 32, 48):
         icon.addPixmap(_render(name, color, size))
     return icon
+
+
+def pixmap(name: str, color: str, size: int) -> QPixmap:
+    """El icono como imagen, en un color fijo (p. ej. blanco sobre una insignia)."""
+    return _render(name, color, size)
 
 
 def icon(name: str) -> QIcon:
