@@ -1,4 +1,6 @@
-"""Pestaña «Aplicados»: solo los ajustes que tiene la foto.
+"""Pestaña «Aplicados»: solo los ajustes que tiene la foto, agrupados por el
+preset del que vienen (con una ✕ para quitar el preset entero) y, aparte,
+los cambiados a mano.
 
 Cada ajuste se puede cambiar (número o casilla) o quitar con la ✕ (vuelve a
 su valor por defecto). Los ajustes especiales (curvas, LUT, recorte,
@@ -57,6 +59,7 @@ class AppliedPanel(QScrollArea):
     changed = Signal(str, object)  # clave, valor nuevo
     reset_requested = Signal(str)  # clave
     reset_all_requested = Signal()
+    remove_preset_requested = Signal(str)  # nombre del preset
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -91,19 +94,24 @@ class AppliedPanel(QScrollArea):
     def set_settings(self, settings: Settings) -> None:
         """Muestra los ajustes de la foto. Si siguen siendo los mismos ajustes
         solo se actualizan los valores (así no se pierde el que se está editando)."""
+        from app.core.presets import preset_owners
+
         values = settings.non_default()
-        keys = tuple(k for k in values)
+        values.pop("preset_stack", None)
+        owners = preset_owners(settings)
+        stack = [e["name"] for e in settings["preset_stack"]]
+        keys = (tuple((k, owners.get(k)) for k in values), tuple(stack))
         if keys != self._keys:
-            self._rebuild(values)
+            self._rebuild(values, owners, stack)
+            self._keys = keys
         else:
             self._update(values)
-        n = len(keys)
+        n = len(values)
         self.count_label.setText("Sin ajustes: la foto está como el original" if n == 0 else
                                  f"{n} ajuste{'s' if n != 1 else ''} en esta foto")
         self.clear_all.setEnabled(n > 0)
 
-    def _rebuild(self, values: dict) -> None:
-        self._keys = tuple(values)
+    def _rebuild(self, values: dict, owners: dict, stack: list) -> None:
         self._editors.clear()
         self._texts.clear()
         old = self._grid_holder
@@ -115,28 +123,72 @@ class AppliedPanel(QScrollArea):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setColumnStretch(0, 1)
 
-        groups: dict[str, list] = {}
-        for p in PARAMS:
-            if p.key in values:
-                groups.setdefault(p.group, []).append(("param", p.key))
-        for key, group, _ in EXTRAS:
-            if key in values:
-                groups.setdefault(group, []).append(("extra", key))
+        def ordered(keys) -> list:
+            """(tipo, clave) en el orden del panel de ajustes."""
+            items = [("param", p.key) for p in PARAMS if p.key in keys]
+            return items + [("extra", k) for k, _, _ in EXTRAS if k in keys]
 
         row = 0
+        # Un bloque por preset aplicado, con los ajustes que vienen de él.
+        for name in stack:
+            mine = [k for k in values if owners.get(k) == name]
+            if not mine:
+                continue
+            row = self._preset_header(grid, row, name)
+            for kind, key in ordered(mine):
+                self._add_row(grid, row, kind, key, values[key])
+                row += 1
+
+        # Lo cambiado a mano, por secciones.
+        manual = [k for k in values if owners.get(k) is None]
+        if manual and row:
+            row = self._title(grid, row, "Ajustes manuales", big=True)
+        groups: dict[str, list] = {}
+        for kind, key in ordered(manual):
+            group = PARAMS_BY_KEY[key].group if kind == "param" else \
+                next(g for k, g, _ in EXTRAS if k == key)
+            groups.setdefault(group, []).append((kind, key))
         for group in ORDER:
             if group not in groups:
                 continue
-            title = QLabel(group)
-            font = title.font()
-            font.setBold(True)
-            title.setFont(font)
-            title.setContentsMargins(0, 8 if row else 0, 0, 2)
-            grid.addWidget(title, row, 0, 1, 3)
-            row += 1
+            row = self._title(grid, row, group)
             for kind, key in groups[group]:
                 self._add_row(grid, row, kind, key, values[key])
                 row += 1
+
+    def _title(self, grid: QGridLayout, row: int, text: str, big: bool = False) -> int:
+        title = QLabel(text)
+        font = title.font()
+        font.setBold(True)
+        if big:
+            font.setPointSizeF(font.pointSizeF() * 1.1)
+        title.setFont(font)
+        title.setContentsMargins(0, 10 if row else 0, 0, 2)
+        grid.addWidget(title, row, 0, 1, 3)
+        return row + 1
+
+    def _preset_header(self, grid: QGridLayout, row: int, name: str) -> int:
+        box = QWidget()
+        box.setObjectName("presetHeader")
+        box.setStyleSheet("#presetHeader { background: rgba(37, 99, 235, 40); border-radius: 4px; }")
+        line = QHBoxLayout(box)
+        line.setContentsMargins(6, 3, 2, 3)
+        label = QLabel(f"Preset: {name.removeprefix('IA · ')}")
+        font = label.font()
+        font.setBold(True)
+        label.setFont(font)
+        line.addWidget(label, 1)
+        remove = QToolButton()
+        remove.setText("✕")
+        remove.setAutoRaise(True)
+        remove.setToolTip(f"Quitar el preset «{name}» (sus ajustes vuelven a como estaban)")
+        remove.clicked.connect(lambda _=False, n=name: self.remove_preset_requested.emit(n))
+        line.addWidget(remove)
+        if row:
+            grid.setRowMinimumHeight(row, 8)
+            row += 1
+        grid.addWidget(box, row, 0, 1, 3)
+        return row + 1
 
     def _add_row(self, grid: QGridLayout, row: int, kind: str, key: str, value) -> None:
         if kind == "param":

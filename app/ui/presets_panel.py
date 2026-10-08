@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 
 from app.core.color import to_display_u8
 from app.core.pipeline import process
-from app.core.presets import NONE_PRESET, Preset, apply_look, list_presets
+from app.core.presets import NONE_PRESET, Preset, list_presets, stack_preset
 from app.core.settings import Settings
 from app.ui.viewer import array_to_qimage
 
@@ -156,7 +156,8 @@ class PresetPanel(QWidget):
         item = self._pending.pop(0)
         preset: Preset = item.data(Qt.ItemDataRole.UserRole)
         try:
-            rgb = to_display_u8(process(self._small, apply_look(self._geometry, preset.values)))
+            # Cómo quedaría la foto con el preset sumado a lo que ya tiene.
+            rgb = to_display_u8(process(self._small, stack_preset(self._geometry, preset)))
             pix = QPixmap.fromImage(array_to_qimage(rgb))
             if preset.category == "ia":
                 pix = _ai_badge(pix)

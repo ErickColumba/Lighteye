@@ -134,6 +134,9 @@ EXTRA_DEFAULTS: dict = {
     "erase_strokes": (),
     # Fondo cuando se quita: None = transparente, (r, g, b) sRGB 0–1 = color.
     "bg_color": None,
+    # Presets aplicados, en orden: ({"name": …, "values": {…}}, …). Sirve para
+    # saber de qué preset viene cada ajuste y poder quitar uno solo.
+    "preset_stack": (),
 }
 
 
@@ -216,6 +219,19 @@ def _normalize_extra(key: str, value):
         return {ch: normalize_curve(value.get(ch, IDENTITY_CURVE)) for ch in CURVE_CHANNELS}
     if key == "lut_path":
         return str(value) if value else None
+    if key == "preset_stack":
+        stack = []
+        for entry in value:
+            raw = dict(entry["values"])
+            # Mismos tipos que en Settings (p. ej. listas del JSON → tuplas).
+            clean = Settings(raw).to_dict()
+            prev_raw = dict(entry.get("previous") or {})
+            prev = Settings(prev_raw).to_dict()
+            stack.append({"name": str(entry["name"]),
+                          "values": {k: clean[k] for k in raw if k in clean and k != "preset_stack"},
+                          # Valores que había antes de aplicarlo (para volver a ellos al quitarlo).
+                          "previous": {k: prev[k] for k in prev_raw if k in prev and k != "preset_stack"}})
+        return tuple(stack)
     if key == "bg_color":
         if value is None:
             return None

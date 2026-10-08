@@ -47,11 +47,65 @@ NONE_PRESET = Preset("Ninguno (original)", Path(), {}, builtin=True)
 
 # Propios de cada foto: no se copian ni se guardan en presets.
 PHOTO_KEYS = (*GEOMETRY_KEYS, "erase_strokes")
+# Registro de presets aplicados: no es un ajuste en sí.
+BOOKKEEPING_KEYS = ("preset_stack",)
 
 
 def look_values(settings: Settings) -> dict:
     """Ajustes que forman parte de un preset (todo menos geometría y borrados)."""
-    return {k: v for k, v in settings.non_default().items() if k not in PHOTO_KEYS}
+    return {k: v for k, v in settings.non_default().items()
+            if k not in PHOTO_KEYS and k not in BOOKKEEPING_KEYS}
+
+
+# --- Presets acumulados ------------------------------------------------------------
+#
+# Aplicar un preset suma sus ajustes a los que ya tiene la foto (si dos presets
+# tocan el mismo ajuste, gana el último). Se recuerda la lista para poder
+# mostrar de qué preset viene cada ajuste y quitar uno solo.
+
+
+def stack_preset(settings: Settings, preset: "Preset") -> Settings:
+    """Ajustes tras añadir `preset` encima de los actuales. «Ninguno» lo quita todo."""
+    if not preset.values:
+        return apply_look(settings, {})
+    result = settings.copy()
+    previous = {k: settings[k] for k in preset.values if not settings.is_default(k)}
+    for key, value in preset.values.items():
+        result[key] = value
+    stack = [e for e in result["preset_stack"] if e["name"] != preset.name]
+    stack.append({"name": preset.name, "values": dict(preset.values), "previous": previous})
+    result["preset_stack"] = stack
+    return result
+
+
+def preset_owners(settings: Settings) -> dict[str, str | None]:
+    """De qué preset viene cada ajuste cambiado (None = cambiado a mano)."""
+    owners = {}
+    stack = settings["preset_stack"]
+    for key, value in look_values(settings).items():
+        owners[key] = next((e["name"] for e in reversed(stack)
+                            if key in e["values"] and e["values"][key] == value), None)
+    return owners
+
+
+def remove_stacked_preset(settings: Settings, name: str) -> Settings:
+    """Quita un preset aplicado. Sus ajustes vuelven al valor del preset
+    anterior que también los tocaba (o al original); lo cambiado a mano se
+    respeta."""
+    owners = preset_owners(settings)
+    result = settings.copy()
+    removed = next((e for e in settings["preset_stack"] if e["name"] == name), None)
+    stack = [e for e in settings["preset_stack"] if e["name"] != name]
+    before = removed.get("previous", {}) if removed else {}
+    for key, owner in owners.items():
+        if owner != name:
+            continue
+        if key in before:
+            result[key] = before[key]  # lo que había justo antes (a mano u otro preset)
+        else:
+            result.reset(key)
+    result["preset_stack"] = stack
+    return result
 
 
 def apply_look(settings: Settings, values: dict) -> Settings:

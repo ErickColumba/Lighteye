@@ -43,7 +43,15 @@ from app.core.loader import (
     load_image,
     make_preview,
 )
-from app.core.presets import apply_look, delete_preset, list_presets, look_values, save_preset
+from app.core.presets import (
+    apply_look,
+    delete_preset,
+    list_presets,
+    look_values,
+    remove_stacked_preset,
+    save_preset,
+    stack_preset,
+)
 from app.core.settings import Settings, load_sidecar, save_sidecar, sidecar_path
 from app.ui.browser import FilmStrip
 from app.ui.crop_tools import CropToolbar
@@ -141,6 +149,7 @@ class MainWindow(QMainWindow):
         self.applied.changed.connect(self._applied_changed)
         self.applied.reset_requested.connect(self._applied_reset)
         self.applied.reset_all_requested.connect(self.reset_all)
+        self.applied.remove_preset_requested.connect(self._remove_preset)
         self.side_tabs = QTabWidget()
         self.side_tabs.setDocumentMode(True)
         self.side_tabs.addTab(self.panel, "Ajustes")
@@ -488,13 +497,22 @@ class MainWindow(QMainWindow):
     def _refresh_applied(self) -> None:
         if self.side_tabs.currentWidget() is self.applied:
             self.applied.set_settings(self.settings)
-        count = len(self.settings.non_default())
+        count = len([k for k in self.settings.non_default() if k != "preset_stack"])
         self.side_tabs.setTabText(1, f"Aplicados ({count})" if count else "Aplicados")
 
     def _applied_changed(self, key: str, value) -> None:
         """Valor cambiado desde la pestaña «Aplicados»."""
         self._on_param_changed(key, value)
         self.panel.set_settings(self.settings)
+
+    def _remove_preset(self, name: str) -> None:
+        """Quitar un preset aplicado (pestaña «Aplicados»)."""
+        if self.crop_mode:
+            self.apply_crop()
+        self._commit_history()
+        self._apply_settings(remove_stacked_preset(self.settings, name))
+        self._commit_history()
+        self.statusBar().showMessage(f"Preset quitado: {name} (Ctrl+Z para deshacer)", 4000)
 
     def _applied_reset(self, key: str) -> None:
         """Quitar un ajuste desde la pestaña «Aplicados»."""
@@ -1079,7 +1097,7 @@ class MainWindow(QMainWindow):
             change, label = (lambda s: apply_look(s, look)), "Ajustes pegados"
         elif action == "preset":
             preset, items = items[0], items[1:]
-            change, label = (lambda s: apply_look(s, preset.values)), f"Preset «{preset.name}» aplicado"
+            change, label = (lambda s: stack_preset(s, preset)), f"Preset «{preset.name}» añadido"
         elif action == "reset":
             change, label = (lambda s: Settings()), "Ajustes restablecidos"
         else:
@@ -1172,10 +1190,11 @@ class MainWindow(QMainWindow):
         if self.crop_mode:
             self.apply_crop()
         self._commit_history()
-        self._apply_settings(apply_look(self.settings, preset.values))
+        self._apply_settings(stack_preset(self.settings, preset))
         self._commit_history()
         if preset.values:
-            self.statusBar().showMessage(f"Preset aplicado: {preset.name}", 4000)
+            self.statusBar().showMessage(f"Preset añadido: {preset.name} (se suma a lo que ya tenía; "
+                                         "lo ves en «Aplicados»)", 5000)
         else:
             self.statusBar().showMessage("Ajustes quitados: foto original (Ctrl+Z para deshacer)", 4000)
 
