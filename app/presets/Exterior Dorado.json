@@ -1,0 +1,19 @@
+{
+  "lighteye_preset": 1,
+  "name": "Exterior · Dorado",
+  "settings": {
+    "highlights": -20.0,
+    "shadows": 15.0,
+    "whites": 10.0,
+    "blacks": -15.0,
+    "temperature": 25.0,
+    "tint": 5.0,
+    "vibrance": 22.0,
+    "dehaze": 8.0,
+    "vignette": -15.0,
+    "split_shadow_hue": 210.0,
+    "split_shadow_sat": 8.0,
+    "split_high_hue": 42.0,
+    "split_high_sat": 25.0
+  }
+}

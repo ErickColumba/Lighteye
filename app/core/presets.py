@@ -2,6 +2,9 @@
 
 Un preset guarda el "look" (luz, color, efectos…) pero no la geometría:
 el recorte y los giros son propios de cada foto.
+
+Lighteye trae además presets incluidos (app/presets/, generados con
+tools/make_default_presets.py); aparecen primero y no se pueden borrar.
 """
 
 import json
@@ -25,11 +28,15 @@ def presets_dir() -> Path:
     return config_dir() / "presets"
 
 
+BUILTIN_DIR = Path(__file__).resolve().parent.parent / "presets"
+
+
 @dataclass(frozen=True)
 class Preset:
     name: str
     path: Path
     values: dict  # solo los ajustes distintos del valor por defecto
+    builtin: bool = False  # incluido con Lighteye (no se puede borrar)
 
 
 def look_values(settings: Settings) -> dict:
@@ -51,7 +58,8 @@ def apply_look(settings: Settings, values: dict) -> Settings:
 
 
 def _file_name(name: str) -> str:
-    safe = re.sub(r"[^\w\- ]+", "", name, flags=re.UNICODE).strip() or "preset"
+    safe = re.sub(r"[^\w\-]+", " ", name, flags=re.UNICODE)
+    safe = re.sub(r"\s+", " ", safe).strip() or "preset"
     return safe[:80] + ".json"
 
 
@@ -65,7 +73,7 @@ def save_preset(name: str, settings: Settings, folder: Path | None = None) -> Pr
     return Preset(name.strip(), path, values)
 
 
-def load_preset(path: Path) -> Preset | None:
+def load_preset(path: Path, builtin: bool = False) -> Preset | None:
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         values = data["settings"]
@@ -73,18 +81,26 @@ def load_preset(path: Path) -> Preset | None:
             return None
         # Se normaliza pasando por Settings (descarta claves desconocidas).
         clean = look_values(Settings(values))
-        return Preset(str(data.get("name") or Path(path).stem), Path(path), clean)
+        return Preset(str(data.get("name") or Path(path).stem), Path(path), clean, builtin)
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
 
 
-def list_presets(folder: Path | None = None) -> list[Preset]:
-    folder = folder or presets_dir()
+def _load_folder(folder: Path, builtin: bool) -> list[Preset]:
     if not folder.is_dir():
         return []
-    presets = [p for p in (load_preset(f) for f in folder.glob("*.json")) if p]
+    presets = [p for p in (load_preset(f, builtin) for f in folder.glob("*.json")) if p]
     return sorted(presets, key=lambda p: p.name.lower())
 
 
+def list_presets(folder: Path | None = None) -> list[Preset]:
+    """Presets incluidos y luego los del usuario. Con `folder`, solo esa carpeta."""
+    if folder is not None:
+        return _load_folder(folder, builtin=False)
+    return _load_folder(BUILTIN_DIR, builtin=True) + _load_folder(presets_dir(), builtin=False)
+
+
 def delete_preset(preset: Preset) -> None:
+    if preset.builtin:
+        raise ValueError("Los presets incluidos con Lighteye no se pueden eliminar")
     preset.path.unlink(missing_ok=True)

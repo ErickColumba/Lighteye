@@ -1,0 +1,14 @@
+{
+  "lighteye_preset": 1,
+  "name": "Cine · Teal & orange",
+  "settings": {
+    "contrast": 10.0,
+    "highlights": -15.0,
+    "whites": 10.0,
+    "blacks": -15.0,
+    "lut_amount": 55.0,
+    "vignette": -20.0,
+    "grain": 6.0,
+    "lut_path": "lighteye:teal_orange.cube"
+  }
+}

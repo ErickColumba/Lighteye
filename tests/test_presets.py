@@ -41,3 +41,29 @@ def test_invalid_files_are_ignored(tmp_path):
 
 def test_look_values_excludes_geometry():
     assert look_values(Settings({"rotate": 2, "flip_h": 1, "grain": 10})) == {"grain": 10.0}
+
+
+def test_builtin_presets(tmp_path, monkeypatch):
+    import pytest
+
+    from app.core.presets import BUILTIN_DIR
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))  # sin presets del usuario
+    save_preset("Mío", Settings({"exposure": 1}))
+    presets = list_presets()
+    builtin = [p for p in presets if p.builtin]
+    assert len(builtin) >= 10
+    assert presets[-1].name == "Mío" and not presets[-1].builtin  # los incluidos van primero
+    assert {p.path.parent for p in builtin} == {BUILTIN_DIR}
+    for p in builtin:
+        assert p.values, p.name  # cada preset cambia algo
+        assert not {"rotate", "flip_h", "flip_v", "angle", "crop"} & set(p.values)
+        assert Settings(p.values).non_default() == p.values  # todos los valores son válidos
+    with pytest.raises(ValueError):
+        delete_preset(builtin[0])
+    assert builtin[0].path.exists()
+
+
+def test_file_names_are_clean(tmp_path):
+    p = save_preset("Retrato · Natural / v2", Settings({"exposure": 1}), tmp_path)
+    assert p.path.name == "Retrato Natural v2.json"

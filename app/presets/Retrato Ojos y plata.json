@@ -1,0 +1,17 @@
+{
+  "lighteye_preset": 1,
+  "name": "Retrato · Ojos y plata",
+  "settings": {
+    "contrast": 12.0,
+    "whites": 20.0,
+    "blacks": -20.0,
+    "temperature": -8.0,
+    "vibrance": 10.0,
+    "sharpen": 25.0,
+    "clarity": 12.0,
+    "hsl_s_orange": -5.0,
+    "hsl_s_green": 30.0,
+    "hsl_s_aqua": 25.0,
+    "hsl_l_green": 10.0
+  }
+}

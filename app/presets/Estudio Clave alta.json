@@ -1,0 +1,16 @@
+{
+  "lighteye_preset": 1,
+  "name": "Estudio · Clave alta",
+  "settings": {
+    "exposure": 0.45,
+    "contrast": -8.0,
+    "highlights": -20.0,
+    "shadows": 30.0,
+    "whites": 40.0,
+    "blacks": -8.0,
+    "temperature": 3.0,
+    "vibrance": 12.0,
+    "saturation": -12.0,
+    "clarity": -12.0
+  }
+}

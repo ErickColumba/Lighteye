@@ -1,0 +1,19 @@
+{
+  "lighteye_preset": 1,
+  "name": "Retrato · Piel suave",
+  "settings": {
+    "exposure": 0.12,
+    "contrast": -5.0,
+    "highlights": -25.0,
+    "shadows": 22.0,
+    "whites": 25.0,
+    "blacks": -10.0,
+    "temperature": 6.0,
+    "vibrance": 10.0,
+    "nr_luma": 25.0,
+    "clarity": -45.0,
+    "vignette": -15.0,
+    "hsl_s_orange": -10.0,
+    "hsl_l_orange": 14.0
+  }
+}

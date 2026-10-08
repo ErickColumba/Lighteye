@@ -757,7 +757,7 @@ class MainWindow(QMainWindow):
         name = name.strip()
         if not ok or not name:
             return
-        if any(p.name.lower() == name.lower() for p in list_presets()):
+        if any(p.name.lower() == name.lower() for p in list_presets() if not p.builtin):
             answer = QMessageBox.question(self, "Lighteye", f"Ya existe «{name}». ¿Reemplazarlo?")
             if answer != QMessageBox.StandardButton.Yes:
                 return

@@ -1,0 +1,19 @@
+{
+  "lighteye_preset": 1,
+  "name": "Editorial · Frío",
+  "settings": {
+    "contrast": 18.0,
+    "highlights": -20.0,
+    "whites": 15.0,
+    "blacks": -20.0,
+    "temperature": -14.0,
+    "vibrance": 8.0,
+    "saturation": -18.0,
+    "clarity": 10.0,
+    "split_shadow_hue": 200.0,
+    "split_shadow_sat": 22.0,
+    "split_high_hue": 35.0,
+    "split_high_sat": 10.0,
+    "split_balance": -10.0
+  }
+}

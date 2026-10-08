@@ -1,0 +1,16 @@
+{
+  "lighteye_preset": 1,
+  "name": "Estudio · Clave baja",
+  "settings": {
+    "exposure": -0.3,
+    "contrast": 30.0,
+    "highlights": 10.0,
+    "shadows": -15.0,
+    "whites": 30.0,
+    "blacks": -40.0,
+    "temperature": -6.0,
+    "saturation": -12.0,
+    "clarity": 18.0,
+    "vignette": -40.0
+  }
+}

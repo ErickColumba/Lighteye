@@ -1,0 +1,66 @@
+{
+  "lighteye_preset": 1,
+  "name": "Película · Mate",
+  "settings": {
+    "contrast": 5.0,
+    "temperature": 4.0,
+    "saturation": -15.0,
+    "vignette": -10.0,
+    "grain": 18.0,
+    "grain_size": 30.0,
+    "split_shadow_hue": 215.0,
+    "split_shadow_sat": 15.0,
+    "split_high_hue": 40.0,
+    "split_high_sat": 15.0,
+    "curves": {
+      "rgb": [
+        [
+          0.0,
+          0.07
+        ],
+        [
+          0.25,
+          0.26
+        ],
+        [
+          0.75,
+          0.77
+        ],
+        [
+          1.0,
+          0.96
+        ]
+      ],
+      "r": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          1.0
+        ]
+      ],
+      "g": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          1.0
+        ]
+      ],
+      "b": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          1.0
+        ]
+      ]
+    }
+  }
+}
