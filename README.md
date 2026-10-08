@@ -14,25 +14,30 @@
   Versión 1.0.0 · Python 3.13 · PySide6 (Qt 6) · NumPy + OpenCV · PyTorch
 </p>
 
+<p align="center">
+  <img src="docs/capturas/1-vista-general.jpg" alt="Lighteye: vista general con una foto editada, presets a la izquierda, ajustes a la derecha y la carpeta abajo">
+</p>
+
 ---
 
 ## Índice
 
 1. [Qué es](#qué-es)
-2. [Funciones](#funciones)
-3. [Herramientas de IA](#herramientas-de-ia)
-4. [Presets y LUT](#presets-y-lut)
-5. [Interfaz y atajos de teclado](#interfaz-y-atajos-de-teclado)
-6. [Formatos](#formatos)
-7. [Dónde guarda las cosas](#dónde-guarda-las-cosas)
-8. [Instalación](#instalación)
-9. [Requisitos](#requisitos)
-10. [Arquitectura técnica](#arquitectura-técnica)
-11. [Rendimiento](#rendimiento)
-12. [Estructura del proyecto](#estructura-del-proyecto)
-13. [Desarrollo, pruebas y compilación](#desarrollo-pruebas-y-compilación)
-14. [Licencias de los modelos](#licencias-de-los-modelos)
-15. [Pendiente](#pendiente)
+2. [Capturas](#capturas)
+3. [Funciones](#funciones)
+4. [Herramientas de IA](#herramientas-de-ia)
+5. [Presets y LUT](#presets-y-lut)
+6. [Interfaz y atajos de teclado](#interfaz-y-atajos-de-teclado)
+7. [Formatos](#formatos)
+8. [Dónde guarda las cosas](#dónde-guarda-las-cosas)
+9. [Instalación](#instalación)
+10. [Requisitos](#requisitos)
+11. [Arquitectura técnica](#arquitectura-técnica)
+12. [Rendimiento](#rendimiento)
+13. [Estructura del proyecto](#estructura-del-proyecto)
+14. [Desarrollo, pruebas y compilación](#desarrollo-pruebas-y-compilación)
+15. [Licencias de los modelos](#licencias-de-los-modelos)
+16. [Pendiente](#pendiente)
 
 ---
 
@@ -46,6 +51,19 @@ Toda la edición se hace en **color lineal en coma flotante (float32)**, y solo 
 convierte a sRGB para mostrar o exportar: así se evitan bandas y colores raros.
 La vista previa trabaja a 1600 px de lado largo y la exportación a resolución
 completa con el mismo procesado, de modo que lo que ves es lo que se exporta.
+
+## Capturas
+
+| | |
+|:---:|:---:|
+| <img src="docs/capturas/2-comparar.jpg" alt="Modo comparar"> | <img src="docs/capturas/3-presets-ia.jpg" alt="Presets de IA con vista previa"> |
+| **Comparar**: original a la izquierda y editada a la derecha, con línea arrastrable | **Presets de IA**: clic = vista previa, **+** = añadir |
+| <img src="docs/capturas/4-quitar-fondo.jpg" alt="Quitar el fondo"> | <img src="docs/capturas/5-aplicados.jpg" alt="Pestaña Aplicados"> |
+| **Quitar el fondo** con IA (transparente o de color) | **Aplicados**: ajustes agrupados por preset, editables y con ✕ para quitarlos |
+| <img src="docs/capturas/6-recorte.jpg" alt="Recorte y enderezado"> | <img src="docs/capturas/1-vista-general.jpg" alt="Vista general"> |
+| **Recortar y enderezar** con proporciones fijas (aquí 16:9) | **Vista general** con la tira de la carpeta; las fotos editadas llevan una insignia |
+
+> Las imágenes de ejemplo de las capturas son ilustraciones generadas con IA.
 
 ## Funciones
 

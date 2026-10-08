@@ -60,7 +60,7 @@ class PresetRow(QWidget):
         super().__init__(parent)
         self.thumb = QLabel()
         self.thumb.setFixedSize(THUMB_SIZE)
-        self.thumb.setStyleSheet("background: rgba(128, 128, 128, 40); border-radius: 3px;")
+        self.thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)  # fotos verticales, centradas
         self.name = QLabel(name)
         self.name.setWordWrap(True)
         self.add = QToolButton()
