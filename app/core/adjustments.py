@@ -337,3 +337,93 @@ def dehaze(img: np.ndarray, amount: float) -> np.ndarray:
     t = cv2.resize(t, (w, h), interpolation=cv2.INTER_LINEAR)
     t = np.maximum(t, 0.15)[..., None]
     return np.maximum((img - airlight) / t + airlight, 0.0)
+
+
+# --- Efectos ----------------------------------------------------------------
+
+
+def black_and_white(img: np.ndarray, on: float, red: float, green: float,
+                    blue: float) -> np.ndarray:
+    """Blanco y negro con mezcla de canales (−100 … +100 por canal).
+
+    Los pesos se normalizan para que un gris siga siendo el mismo gris.
+    """
+    if not on:
+        return img
+    weights = LUMA + np.array([red, green, blue], np.float32) / 100.0 * 0.5
+    weights = np.maximum(weights, 0.0)
+    total = float(weights.sum())
+    weights = weights / total if total > 0.05 else LUMA
+    grey = cv2.transform(img, weights.astype(np.float32)[None, :])
+    return cv2.merge([grey, grey, grey])
+
+
+def _hue_tint(hue: float) -> np.ndarray:
+    """Color puro del tono dado (grados), con luminancia 1."""
+    rgb = cv2.cvtColor(np.array([[[hue, 1.0, 1.0]]], np.float32), cv2.COLOR_HSV2RGB)[0, 0]
+    rgb = srgb_to_linear(rgb)
+    return rgb / float(rgb @ LUMA)
+
+
+def split_toning(img: np.ndarray, shadow_hue: float, shadow_sat: float,
+                 high_hue: float, high_sat: float, balance: float) -> np.ndarray:
+    """Tono dividido: un color para las sombras y otro para las luces.
+
+    Los tintes tienen luminancia 1, así que colorean sin aclarar ni oscurecer.
+    El equilibrio positivo da más peso al color de las luces.
+    """
+    if shadow_sat == 0 and high_sat == 0:
+        return img
+    _, y = _perceptual_luma(img)
+    t = np.clip(y + 0.25 * balance / 100.0, 0.0, 1.0)[..., None]
+    tint_s = (_hue_tint(shadow_hue) - 1.0) * (shadow_sat / 100.0 * 0.6)
+    tint_h = (_hue_tint(high_hue) - 1.0) * (high_sat / 100.0 * 0.6)
+    gain = 1.0 + (1.0 - t) ** 2 * tint_s.astype(np.float32) + t**2 * tint_h.astype(np.float32)
+    return np.maximum(img * gain, 0.0)
+
+
+@lru_cache(maxsize=4)
+def _vignette_mask(h: int, w: int, size: float, feather: float) -> np.ndarray:
+    """0 en el centro, 1 en las esquinas; elíptica, sigue la forma del encuadre."""
+    y = np.linspace(-1.0, 1.0, h, dtype=np.float32)[:, None]
+    x = np.linspace(-1.0, 1.0, w, dtype=np.float32)[None, :]
+    r = np.sqrt(x * x + y * y) / np.sqrt(2.0)
+    start = 0.9 - 0.8 * size / 100.0
+    width = 0.05 + 0.9 * feather / 100.0
+    t = np.clip((r - start) / width, 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)  # smoothstep
+
+
+def vignette(img: np.ndarray, amount: float, size: float, feather: float) -> np.ndarray:
+    """Oscurece (amount < 0) o aclara (amount > 0) los bordes, hasta ±2 pasos."""
+    if amount == 0:
+        return img
+    mask = _vignette_mask(img.shape[0], img.shape[1], size, feather)
+    return img * np.exp2(amount / 100.0 * 2.0 * mask)[..., None]
+
+
+@lru_cache(maxsize=2)
+def _grain_field(h: int, w: int, size: float) -> np.ndarray:
+    """Ruido gaussiano (desviación 1) con granos de tamaño `size`.
+
+    Se genera en una rejilla que depende del tamaño de la vista previa, no
+    de la imagen: así el grano es el mismo patrón en la vista previa y en la
+    exportación, solo que a más resolución.
+    """
+    grain_px = 1.0 + 3.0 * size / 100.0  # en píxeles de la vista previa
+    cells = PREVIEW_LONG_SIDE / grain_px
+    scale = cells / max(h, w)
+    gh, gw = max(2, round(h * scale)), max(2, round(w * scale))
+    noise = np.random.default_rng(1234).standard_normal((gh, gw)).astype(np.float32)
+    noise = cv2.resize(noise, (w, h), interpolation=cv2.INTER_CUBIC)
+    return noise / max(float(noise.std()), 1e-6)
+
+
+def grain(img: np.ndarray, amount: float, size: float) -> np.ndarray:
+    """Grano de película monocromo, más visible en los medios tonos."""
+    if amount == 0:
+        return img
+    _, y = _perceptual_luma(img)
+    weight = np.clip(4.0 * y * (1.0 - y) + 0.2, 0.0, 1.0)
+    noise = _grain_field(img.shape[0], img.shape[1], size)
+    return img * np.exp2(noise * weight * (amount / 100.0 * 0.5))[..., None]

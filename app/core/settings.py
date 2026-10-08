@@ -29,10 +29,6 @@ class Param:
     tab: str = ""  # pestaña dentro del grupo (p. ej. HSL: Tono/Saturación/…)
 
 
-def _toggle(key: str, label: str, group: str) -> Param:
-    return Param(key, label, group, 0, 1, kind="toggle")
-
-
 # Grupos en el orden en que aparecen en el panel.
 GROUPS = ["Luz", "Curvas", "Color", "HSL", "Detalle", "Efectos"]
 
@@ -55,6 +51,23 @@ PARAMS += [
     Param("nr_color", "Ruido de color", "Detalle", 0, 100),
     Param("clarity", "Claridad", "Detalle", -100, 100),
     Param("dehaze", "Neblina", "Detalle", -100, 100),
+]
+
+PARAMS += [
+    Param("vignette", "Cantidad", "Efectos", -100, 100, tab="Viñeta"),
+    Param("vignette_size", "Tamaño", "Efectos", 0, 100, 50, tab="Viñeta"),
+    Param("vignette_feather", "Suavidad", "Efectos", 0, 100, 50, tab="Viñeta"),
+    Param("grain", "Cantidad", "Efectos", 0, 100, tab="Grano"),
+    Param("grain_size", "Tamaño", "Efectos", 0, 100, 25, tab="Grano"),
+    Param("bw", "Blanco y negro", "Efectos", 0, 1, kind="toggle", tab="B/N"),
+    Param("bw_red", "Rojos", "Efectos", -100, 100, tab="B/N"),
+    Param("bw_green", "Verdes", "Efectos", -100, 100, tab="B/N"),
+    Param("bw_blue", "Azules", "Efectos", -100, 100, tab="B/N"),
+    Param("split_shadow_hue", "Tono sombras", "Efectos", 0, 360, 220, tab="Virado"),
+    Param("split_shadow_sat", "Saturación sombras", "Efectos", 0, 100, tab="Virado"),
+    Param("split_high_hue", "Tono luces", "Efectos", 0, 360, 45, tab="Virado"),
+    Param("split_high_sat", "Saturación luces", "Efectos", 0, 100, tab="Virado"),
+    Param("split_balance", "Equilibrio", "Efectos", -100, 100, tab="Virado"),
 ]
 
 # HSL por color: (clave, nombre, centro del rango de tono en grados).

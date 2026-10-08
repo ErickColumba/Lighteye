@@ -332,3 +332,51 @@ def test_dehaze_increases_contrast_and_negative_adds_haze():
     assert clearer.mean() < hazy.mean()
     foggier = adj.dehaze(hazy, -80)
     assert foggier.std() < hazy.std()
+
+
+# --- Efectos ------------------------------------------------------------------
+
+def test_effects_off_are_identity(img):
+    assert adj.black_and_white(img, 0, 50, 0, 0) is img
+    assert adj.split_toning(img, 200, 0, 40, 0, 30) is img
+    assert adj.vignette(img, 0, 50, 50) is img
+    assert adj.grain(img, 0, 25) is img
+
+
+def test_black_and_white_is_grey_and_keeps_greys():
+    out = adj.black_and_white(np.random.default_rng(0).uniform(0, 1, (8, 8, 3)).astype(np.float32),
+                              1, 30, -20, 10)
+    assert np.allclose(out[..., 0], out[..., 1]) and np.allclose(out[..., 1], out[..., 2])
+    grey = np.full((2, 2, 3), 0.4, np.float32)
+    assert np.allclose(adj.black_and_white(grey, 1, 80, -50, 20), grey, atol=1e-5)
+    red = np.array([[[0.6, 0.05, 0.05]]], np.float32)
+    assert adj.black_and_white(red, 1, 100, 0, 0)[0, 0, 0] > adj.black_and_white(red, 1, 0, 0, 0)[0, 0, 0]
+
+
+def test_split_toning_tints_and_keeps_luminance():
+    grey = np.full((1, 2, 3), 0.03, np.float32)
+    grey[0, 1] = 0.7
+    out = adj.split_toning(grey, 220, 100, 45, 100, 0)
+    assert out[0, 0, 2] > out[0, 0, 0]  # sombras azuladas
+    assert out[0, 1, 0] > out[0, 1, 2]  # luces cálidas
+    assert np.allclose(luminance(out), luminance(grey), rtol=0.02)
+
+
+def test_vignette_darkens_corners_not_centre():
+    flat = np.full((101, 151, 3), 0.5, np.float32)
+    out = adj.vignette(flat, -100, 50, 50)
+    assert out[50, 75, 0] == pytest.approx(0.5, abs=1e-4)
+    assert out[0, 0, 0] < 0.2
+    assert adj.vignette(flat, 100, 50, 50)[0, 0, 0] > 0.5
+
+
+def test_grain_is_deterministic_and_matches_across_resolutions():
+    # Vista previa (1600 px) frente a exportación al doble de resolución.
+    flat = np.full((100, 1600, 3), 0.2, np.float32)
+    a1 = adj.grain(flat, 60, 25)
+    assert np.array_equal(a1, adj.grain(flat, 60, 25))
+    assert a1.std() > 0.005
+    assert abs(a1.mean() - 0.2) < 0.02
+    big = adj.grain(np.full((200, 3200, 3), 0.2, np.float32), 60, 25)
+    small = cv2.resize(big, (1600, 100), interpolation=cv2.INTER_AREA)
+    assert np.corrcoef(small[..., 0].ravel(), a1[..., 0].ravel())[0, 1] > 0.8

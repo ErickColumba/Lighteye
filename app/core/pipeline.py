@@ -23,8 +23,14 @@ STEPS = [
     (("saturation",), adj.saturation),
     (("clarity",), adj.clarity),
     (("dehaze",), adj.dehaze),
-    # Nitidez de salida: al final, sobre la imagen ya terminada.
+    (("bw", "bw_red", "bw_green", "bw_blue"), adj.black_and_white),
+    (("split_shadow_hue", "split_shadow_sat", "split_high_hue", "split_high_sat",
+      "split_balance"), adj.split_toning),
+    (("vignette", "vignette_size", "vignette_feather"), adj.vignette),
+    # Nitidez de salida: sobre la imagen ya terminada.
     (("sharpen",), adj.sharpen),
+    # El grano va después de la nitidez para que no se realce.
+    (("grain", "grain_size"), adj.grain),
 ]
 
 
