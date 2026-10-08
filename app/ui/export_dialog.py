@@ -57,9 +57,24 @@ class ExportDialog(QDialog):
         row.addWidget(self.resize_box)
         row.addWidget(self.long_side, 1)
 
+        from app.ai import runtime
+
+        self.ai_scale = QComboBox()
+        for label, factor in (("No", 1), ("×2 (Real-ESRGAN)", 2), ("×4 (Real-ESRGAN)", 4)):
+            self.ai_scale.addItem(label, factor)
+        available = runtime.model_available("realesrgan_x2") and runtime.model_available("realesrgan_x4")
+        if available:
+            self.ai_scale.setCurrentIndex(max(0, self.ai_scale.findData(int(store.value("export/ai_scale", 1)))))
+            self.ai_scale.setToolTip(f"Aumenta la resolución con IA · {runtime.device_name()}")
+        else:
+            self.ai_scale.setEnabled(False)
+            self.ai_scale.setToolTip("No disponible: falta PyTorch o los modelos "
+                                     "(python tools/download_models.py)")
+
         form = QFormLayout(self)
         form.addRow("Formato", self.format)
         form.addRow("Calidad JPG", quality_row)
+        form.addRow("Escalar con IA", self.ai_scale)
         form.addRow("Tamaño", size_row)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                                    | QDialogButtonBox.StandardButton.Cancel)
@@ -85,6 +100,7 @@ class ExportDialog(QDialog):
             fmt=self.format.currentData(),
             quality=self.quality.value(),
             long_side=self.long_side.value() if self.resize_box.isChecked() else None,
+            ai_scale=self.ai_scale.currentData() if self.ai_scale.isEnabled() else 1,
         )
 
     def accept(self) -> None:
@@ -93,6 +109,7 @@ class ExportDialog(QDialog):
         store.setValue("export/quality", self.quality.value())
         store.setValue("export/resize", "true" if self.resize_box.isChecked() else "false")
         store.setValue("export/long_side", self.long_side.value())
+        store.setValue("export/ai_scale", self.ai_scale.currentData())
         super().accept()
 
 

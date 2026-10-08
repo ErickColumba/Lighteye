@@ -31,6 +31,7 @@ class ExportOptions:
     fmt: str = "jpeg"
     quality: int = 92  # solo JPG
     long_side: int | None = None  # None = tamaño original
+    ai_scale: int = 1  # 2 o 4: escalar con Real-ESRGAN antes de guardar
 
     @property
     def extension(self) -> str:
@@ -138,6 +139,23 @@ def _jpeg_with_exif(jpeg: bytes, exif: bytes) -> bytes:
 # --- Exportar ------------------------------------------------------------------
 
 
+MAX_AI_MEGAPIXELS = 150  # más que esto no cabe razonablemente en memoria
+
+
+def ai_upscale(linear: np.ndarray, factor: int, progress=None) -> np.ndarray:
+    """Escala con Real-ESRGAN (trabaja en sRGB) y devuelve lineal."""
+    from app.ai import runtime
+    from app.core.color import linear_to_srgb, srgb_to_linear
+
+    h, w = linear.shape[:2]
+    megapixels = h * w * factor * factor / 1e6
+    if megapixels > MAX_AI_MEGAPIXELS:
+        raise ValueError(f"El resultado tendría {megapixels:.0f} MP (máximo {MAX_AI_MEGAPIXELS}). "
+                         "Usa ×2 o recorta la foto.")
+    srgb = runtime.upscale(linear_to_srgb(linear), factor, progress)
+    return srgb_to_linear(srgb)
+
+
 def export_image(src: Path, image: np.ndarray, settings: Settings, out_path: Path,
                  options: ExportOptions, progress=None) -> Path:
     """Procesa `image` (lineal, resolución completa) y la guarda en out_path.
@@ -145,11 +163,17 @@ def export_image(src: Path, image: np.ndarray, settings: Settings, out_path: Pat
     `progress(fracción 0–1)` informa del avance; si lanza una excepción, la
     exportación se cancela sin dejar archivo a medias.
     """
+    upscaling = options.ai_scale > 1
+    share = 0.4 if upscaling else 0.9  # parte de la barra para el pipeline
+
     def step(done, total):
         if progress:
-            progress(0.9 * done / max(total, 1))
+            progress(share * done / max(total, 1))
 
     linear = render_full(image, settings, step)
+    if upscaling:
+        linear = ai_upscale(linear, options.ai_scale,
+                            lambda f: progress(share + 0.5 * f) if progress else None)
     linear = resize_long_side(linear, options.long_side)
     rgb = to_output_bits(linear, options.bits)
     data = encode(rgb, options)
