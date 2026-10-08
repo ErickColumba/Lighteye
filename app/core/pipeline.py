@@ -39,18 +39,23 @@ STEPS = [
 ]
 
 
-def process(img: np.ndarray, settings: Settings) -> np.ndarray:
-    """Devuelve una imagen lineal float32 nueva; `img` no se modifica."""
+def process(img: np.ndarray, settings: Settings, progress=None) -> np.ndarray:
+    """Devuelve una imagen lineal float32 nueva; `img` no se modifica.
+
+    `progress(hecho, total)` se llama tras cada paso (para la barra de
+    progreso de la exportación); si lanza una excepción, el proceso se corta.
+    """
+    active = [(keys, fn) for keys, fn in STEPS if not all(settings.is_default(k) for k in keys)]
     out = img
-    for keys, fn in STEPS:
-        if all(settings.is_default(k) for k in keys):
-            continue
+    for i, (keys, fn) in enumerate(active, start=1):
         out = fn(out, *(settings[k] for k in keys))
+        if progress:
+            progress(i, len(active))
     if out is img:
         out = img.copy()
     return out.astype(np.float32, copy=False)
 
 
-def render_full(img: np.ndarray, settings: Settings) -> np.ndarray:
+def render_full(img: np.ndarray, settings: Settings, progress=None) -> np.ndarray:
     """Geometría + ajustes sobre la imagen completa (para exportar)."""
-    return process(apply_geometry(img, settings), settings)
+    return process(apply_geometry(img, settings), settings, progress)

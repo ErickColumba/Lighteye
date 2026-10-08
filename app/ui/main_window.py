@@ -6,10 +6,12 @@ from PySide6.QtCore import QRectF, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QDockWidget,
     QFileDialog,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QVBoxLayout,
     QWidget,
 )
@@ -33,8 +35,9 @@ from app.core.loader import (
     load_image,
     make_preview,
 )
-from app.core.settings import Settings
+from app.core.settings import Settings, load_sidecar, save_sidecar, sidecar_path
 from app.ui.crop_tools import CropToolbar
+from app.ui.export_dialog import ExportDialog, ExportWorker, ask_output_path
 from app.ui.histogram import HistogramWidget
 from app.ui.panels import AdjustmentPanel
 from app.ui.renderer import PreviewRenderer
@@ -54,6 +57,7 @@ class MainWindow(QMainWindow):
         self._source_sig = None  # geometría con la que se calculó self.preview
         self.crop_mode = False
         self._crop_backup: Settings | None = None
+        self._export_worker: ExportWorker | None = None
         self.settings = Settings()
         self.shown_rgb = None  # última imagen calculada (sRGB uint8)
         self.before_rgb = None  # la foto sin ajustes, para comparar
@@ -107,6 +111,8 @@ class MainWindow(QMainWindow):
     def _build_menus(self) -> None:
         file_menu = self.menuBar().addMenu("&Archivo")
         self._add_action(file_menu, "&Abrir…", QKeySequence.StandardKey.Open, self.choose_image)
+        self.export_action = self._add_action(file_menu, "&Exportar…", "Ctrl+E", self.export)
+        self.export_action.setEnabled(False)
         file_menu.addSeparator()
         self._add_action(file_menu, "&Salir", QKeySequence.StandardKey.Quit, self.close)
 
@@ -162,28 +168,33 @@ class MainWindow(QMainWindow):
         QApplication.restoreOverrideCursor()
 
         if self.crop_mode:
-            self._leave_crop_mode()
+            self.cancel_crop()
+        self._commit_history()  # guarda la edición de la foto anterior
         self.renderer.cancel()
         self.loaded = loaded
         self.base_preview = make_preview(loaded.image)
         self.preview = self.base_preview
-        self.settings = Settings()
-        self._source_sig = geometry_signature(self.settings)
+        self._source_sig = geometry_signature(Settings())
+        # Si la foto ya se había editado, se recuperan sus ajustes.
+        self.settings = load_sidecar(loaded.path) or Settings()
         self._history_timer.stop()
         self.history = History(self.settings)
         self._update_history_actions()
         self.panel.set_settings(self.settings)
         self.panel.setEnabled(True)
+        self.export_action.setEnabled(True)
         rgb = to_display_u8(self.base_preview)
         self.before_rgb = rgb
         self._set_before(False)
         self._on_rendered(rgb, compute_histogram(rgb))
+        self._request_render()
         self.viewer.fit()
 
         h, w = loaded.image.shape[:2]
         kind = "RAW" if loaded.is_raw else f"{loaded.info.get('bits', 8)} bits"
         self.setWindowTitle(f"{loaded.path.name} — Lighteye")
-        self.statusBar().showMessage(f"{loaded.path.name}  ·  {w} × {h}  ·  {kind}")
+        edited = "  ·  ajustes recuperados" if self.settings != Settings() else ""
+        self.statusBar().showMessage(f"{loaded.path.name}  ·  {w} × {h}  ·  {kind}{edited}")
 
     # --- Ajustes ----------------------------------------------------------
 
@@ -209,9 +220,21 @@ class MainWindow(QMainWindow):
 
     def _commit_history(self) -> None:
         self._history_timer.stop()
-        if self.preview is not None:
-            self.history.push(self.settings)
+        if self.preview is not None and self.history.push(self.settings):
+            self._save_sidecar()
         self._update_history_actions()
+
+    def _save_sidecar(self) -> None:
+        """Guarda los ajustes junto a la foto (foto.jpg.json). El original no se toca."""
+        if self.loaded is None:
+            return
+        # Una foto sin editar no necesita archivo, salvo que ya existiera uno.
+        if self.settings == Settings() and not sidecar_path(self.loaded.path).exists():
+            return
+        try:
+            save_sidecar(self.loaded.path, self.settings)
+        except OSError as exc:
+            self.statusBar().showMessage(f"No se pudieron guardar los ajustes: {exc}", 5000)
 
     def _update_history_actions(self) -> None:
         self.undo_action.setEnabled(self.history.can_undo() or self._history_timer.isActive())
@@ -235,6 +258,7 @@ class MainWindow(QMainWindow):
             return
         settings, what = result
         self._apply_settings(settings)
+        self._save_sidecar()
         self._update_history_actions()
         self.statusBar().showMessage(f"{verb}: {what}", 3000)
 
@@ -388,7 +412,57 @@ class MainWindow(QMainWindow):
             rgb = clipping_overlay(rgb)
         self.viewer.set_image(rgb)
 
+    # --- Exportar ---------------------------------------------------------------
+
+    def export(self) -> None:
+        if self.loaded is None:
+            return
+        if self.crop_mode:
+            self.apply_crop()
+        self._commit_history()
+        dialog = ExportDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        options = dialog.options()
+        out_path = ask_output_path(self, self.loaded.path, options)
+        if out_path is None:
+            return
+        if out_path.resolve() == self.loaded.path.resolve():
+            QMessageBox.warning(self, "Lighteye", "No se puede sobrescribir la foto original.")
+            return
+
+        progress = QProgressDialog("Exportando…", "Cancelar", 0, 100, self)
+        progress.setWindowTitle("Exportar")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        worker = ExportWorker(self.loaded.path, self.loaded.image, self.settings, out_path, options, self)
+        worker.progress.connect(progress.setValue)
+        progress.canceled.connect(worker.cancel)
+
+        def done(message: str, ok: bool) -> None:
+            progress.reset()
+            self._export_worker = None
+            worker.deleteLater()
+            if ok:
+                self.statusBar().showMessage(f"Exportada: {message}", 8000)
+            elif message:
+                QMessageBox.warning(self, "Lighteye", f"No se pudo exportar:\n{message}")
+            else:
+                self.statusBar().showMessage("Exportación cancelada", 4000)
+
+        worker.succeeded.connect(lambda path: done(path, True))
+        worker.failed.connect(lambda msg: done(msg, False))
+        self._export_worker = worker  # evita que Python lo libere mientras trabaja
+        worker.start()
+
     def closeEvent(self, event):
+        self._commit_history()
+        worker = self._export_worker
+        if worker is not None and worker.isRunning():
+            worker.cancel()
+            worker.wait()
         self.renderer.shutdown()
         super().closeEvent(event)
 

@@ -2,6 +2,7 @@
 
 import sys
 
+from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
 from PySide6.QtWidgets import QApplication
 
 from app.core.memory import tune_allocator
@@ -13,6 +14,12 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Lighteye")
     app.setOrganizationName("Lighteye")
+
+    # Textos estándar de Qt (Cancelar, Aceptar, diálogos de archivo) en español.
+    translator = QTranslator(app)
+    path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    if translator.load(QLocale("es"), "qtbase", "_", path):
+        app.installTranslator(translator)
 
     window = MainWindow()
     window.show()
