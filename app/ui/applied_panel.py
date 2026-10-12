@@ -30,8 +30,9 @@ EXTRAS = [
     ("bg_color", "Fondo (IA)", "Fondo nuevo"),
     ("crop", "Geometría", "Recorte"),
     ("erase_strokes", "Geometría", "Borrar objetos"),
+    ("masks", "Máscaras", "Máscaras"),
 ]
-ORDER = [*GROUPS, "Geometría"]
+ORDER = [*GROUPS, "Máscaras", "Geometría"]
 
 
 def _describe_extra(key: str, value) -> str:
@@ -51,7 +52,11 @@ def _describe_extra(key: str, value) -> str:
         return f"{w * 100:.0f} % × {h * 100:.0f} % de la foto"
     if key == "erase_strokes":
         n = len(value)
-        return f"{n} trazo{'s' if n != 1 else ''}"
+        heal = sum(1 for s in value if s.get("heal"))
+        text = f"{n} trazo{'s' if n != 1 else ''}"
+        return text + (f" ({heal} con el corrector)" if heal else "")
+    if key == "masks":
+        return ", ".join(m["name"] for m in value)
     return str(value)
 
 

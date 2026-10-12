@@ -63,8 +63,9 @@ class _State:
 
 class _Worker(QRunnable):
     def __init__(self, generation: int, image: np.ndarray, settings: Settings,
-                 draft: bool, state: _State, prep=None, post=None):
+                 draft: bool, state: _State, prep=None, post=None, mask_context=None):
         super().__init__()
+        self.mask_context = mask_context
         self.prep = prep
         self.post = post
         self.generation = generation
@@ -80,11 +81,12 @@ class _Worker(QRunnable):
             if self.draft:
                 small = self.state.draft_of(self.image)
                 rgb = to_display_u8(process(small, self.settings, cache=self.state.draft_cache,
-                                            detail_scale=DRAFT_SCALE))
+                                            detail_scale=DRAFT_SCALE, mask_context=self.mask_context))
                 h, w = self.image.shape[:2]
                 rgb = cv2.resize(rgb, (w, h), interpolation=cv2.INTER_LINEAR)
             else:
-                rgb = to_display_u8(process(self.image, self.settings, cache=self.state.full_cache))
+                rgb = to_display_u8(process(self.image, self.settings, cache=self.state.full_cache,
+                                            mask_context=self.mask_context))
             histogram = compute_histogram(rgb)  # del resultado, sin el fondo nuevo
             if self.post is not None:
                 rgb = self.post(rgb)
@@ -112,12 +114,14 @@ class PreviewRenderer(QObject):
         self._state = _State()
 
     def request(self, image: np.ndarray, settings: Settings, draft: bool = False,
-                prep=None, post=None) -> None:
+                prep=None, post=None, mask_context=None) -> None:
         """`prep` = (clave, función imagen → imagen) que se aplica al origen
-        antes del pipeline, en el hilo de trabajo (p. ej. rostros y retoque)."""
+        antes del pipeline, en el hilo de trabajo (p. ej. rostros y retoque).
+        `mask_context`: dónde cae la foto original en `image` (máscaras)."""
         self._generation += 1
         # Copia de settings: la interfaz puede seguir cambiándolos mientras tanto.
-        self._pending = _Worker(self._generation, image, settings.copy(), draft, self._state, prep, post)
+        self._pending = _Worker(self._generation, image, settings.copy(), draft, self._state, prep, post,
+                                mask_context)
         self._start_pending()
 
     def cancel(self) -> None:

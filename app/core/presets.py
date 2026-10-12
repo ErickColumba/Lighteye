@@ -46,7 +46,7 @@ NONE_PRESET = Preset("Ninguno (original)", Path(), {}, builtin=True)
 
 
 # Propios de cada foto: no se copian ni se guardan en presets.
-PHOTO_KEYS = (*GEOMETRY_KEYS, "erase_strokes")
+PHOTO_KEYS = (*GEOMETRY_KEYS, "erase_strokes", "masks")
 # Registro de presets aplicados: no es un ajuste en sí.
 BOOKKEEPING_KEYS = ("preset_stack",)
 

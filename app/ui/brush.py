@@ -5,6 +5,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QGraphicsItem,
+    QComboBox,
     QGraphicsObject,
     QLabel,
     QPushButton,
@@ -22,6 +23,7 @@ class BrushOverlay(QGraphicsObject):
         super().__init__()
         self.bounds = QRectF()
         self.radius_px = 30  # radio en píxeles de pantalla
+        self.color = QColor(255, 40, 40, 140)  # color del trazo mientras se pinta
         self._points: list[QPointF] = []
         self._hover: QPointF | None = None
         self.setZValue(20)
@@ -48,7 +50,7 @@ class BrushOverlay(QGraphicsObject):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         r = self.radius()
         if self._points:
-            pen = QPen(QColor(255, 40, 40, 140), 2 * r, Qt.PenStyle.SolidLine,
+            pen = QPen(self.color, 2 * r, Qt.PenStyle.SolidLine,
                        Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
             p.setPen(pen)
             path = QPainterPath(self._points[0])
@@ -95,13 +97,23 @@ class BrushOverlay(QGraphicsObject):
 
 class EraseToolbar(QToolBar):
     size_changed = Signal(int)
+    heal_changed = Signal(bool)  # True = corrector rápido, False = relleno con IA
     clear_requested = Signal()
     done_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__("Borrar objetos", parent)
         self.setMovable(False)
-        self.addWidget(QLabel("  Pinta sobre lo que quieras borrar.   Tamaño del pincel "))
+        self.addWidget(QLabel("  Pinta sobre lo que quieras borrar.  "))
+        self.mode = QComboBox()
+        self.mode.addItem("Relleno con IA (LaMa)")
+        self.mode.addItem("Corrector rápido")
+        self.mode.setToolTip("IA: objetos y personas, tarda unos segundos.\n"
+                             "Corrector rápido: manchas, granitos, polvo; instantáneo y sin IA.")
+        self.mode.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.mode.currentIndexChanged.connect(lambda i: self.heal_changed.emit(i == 1))
+        self.addWidget(self.mode)
+        self.addWidget(QLabel("   Tamaño del pincel "))
         self.size = QSlider(Qt.Orientation.Horizontal)
         self.size.setRange(4, 200)
         self.size.setValue(30)

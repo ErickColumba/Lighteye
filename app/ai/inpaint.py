@@ -6,6 +6,9 @@ sobreviven a recortes y giros y el original nunca se modifica.
 
 Cada zona pintada se rellena con LaMa usando a su alrededor el contexto
 justo (no la foto entera), y el resultado se guarda en caché.
+
+Los trazos con "heal": True son del pincel corrector rápido: se rellenan con
+cv2.inpaint (instantáneo, sin modelo), ideal para manchas y granitos.
 """
 
 import hashlib
@@ -64,9 +67,10 @@ def _inpaint(model, srgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
 def erase(srgb: np.ndarray, strokes, progress=None, device: str | None = None) -> list[Patch]:
     """Rellena las zonas pintadas de una foto (sRGB 0–1, resolución completa)."""
     h, w = srgb.shape[:2]
+    patches = _heal(srgb, [s for s in strokes if s.get("heal")])
+    strokes = [s for s in strokes if not s.get("heal")]
     full = strokes_mask(h, w, strokes)
     count, labels, stats, _ = cv2.connectedComponentsWithStats((full > 0).astype(np.uint8))
-    patches = []
     if count <= 1:
         return patches
     model = runtime.load("lama", device)
@@ -96,6 +100,29 @@ def erase(srgb: np.ndarray, strokes, progress=None, device: str | None = None) -
                 progress(i / (count - 1))
     finally:
         runtime.release()
+    return patches
+
+
+def _heal(srgb: np.ndarray, strokes) -> list[Patch]:
+    """Pincel corrector: rellena cada zona con lo que la rodea (cv2.inpaint)."""
+    if not strokes:
+        return []
+    h, w = srgb.shape[:2]
+    full = strokes_mask(h, w, strokes)
+    count, _, stats, _ = cv2.connectedComponentsWithStats((full > 0).astype(np.uint8))
+    patches = []
+    for i in range(1, count):
+        bx, by, bw, bh = stats[i, :4]
+        margin = int(max(16, 0.5 * max(bw, bh)))
+        x0, y0 = max(0, bx - margin), max(0, by - margin)
+        x1, y1 = min(w, bx + bw + margin), min(h, by + bh + margin)
+        hole = full[y0:y1, x0:x1]
+        hole = cv2.dilate(hole, np.ones((3, 3), np.uint8))
+        region = np.clip(srgb[y0:y1, x0:x1] * 255 + 0.5, 0, 255).astype(np.uint8)
+        filled = cv2.inpaint(region, (hole > 0).astype(np.uint8), max(3, min(bw, bh) // 4), cv2.INPAINT_TELEA)
+        filled = filled.astype(np.float32) / 255
+        soft = cv2.GaussianBlur((hole > 0).astype(np.float32), (0, 0), 1.5)
+        patches.append(Patch(filled, soft, int(x0), int(y0)))
     return patches
 
 

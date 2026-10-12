@@ -192,7 +192,12 @@ def export_image(src: Path, image: np.ndarray, settings: Settings, out_path: Pat
         from app.ai.inpaint import patches_for
 
         patches = patches_for(Path(src), image, list(settings["erase_strokes"]))
-    linear = render_full(image, settings, step, faces, parses, patches)
+    subject = None
+    if any(m["type"] in ("subject", "background") for m in settings["masks"]):
+        from app.ai.background import alpha_for
+
+        subject = alpha_for(Path(src), image)
+    linear = render_full(image, settings, step, faces, parses, patches, subject)
 
     # Máscara del sujeto (quitar fondo), al tamaño del resultado de la geometría.
     alpha = None

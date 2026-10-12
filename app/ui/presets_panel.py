@@ -129,6 +129,7 @@ class PresetPanel(QWidget):
         self.previewing = None  # preset en vista previa
         self._small: np.ndarray | None = None  # versión diminuta de la foto actual
         self._geometry = Settings()
+        self._mask_context = None
         self._pending: list[QListWidgetItem] = []
         # Las miniaturas se calculan de una en una para no bloquear la interfaz.
         self._timer = QTimer(self, interval=0)
@@ -185,9 +186,10 @@ class PresetPanel(QWidget):
         self.delete.setEnabled(False)
         self._schedule()
 
-    def set_photo(self, small: np.ndarray | None, geometry: Settings) -> None:
+    def set_photo(self, small: np.ndarray | None, geometry: Settings, mask_context=None) -> None:
         """Foto (lineal, ya recortada y pequeña) sobre la que se ven los presets."""
         self._small = small
+        self._mask_context = mask_context
         self._geometry = geometry.copy()
         self._schedule()
 
@@ -205,7 +207,8 @@ class PresetPanel(QWidget):
         preset: Preset = item.data(Qt.ItemDataRole.UserRole)
         try:
             # Cómo quedaría la foto con el preset sumado a lo que ya tiene.
-            rgb = to_display_u8(process(self._small, stack_preset(self._geometry, preset)))
+            rgb = to_display_u8(process(self._small, stack_preset(self._geometry, preset),
+                                        mask_context=self._mask_context))
             pix = QPixmap.fromImage(array_to_qimage(rgb))
             if preset.category == "ia":
                 pix = _ai_badge(pix)

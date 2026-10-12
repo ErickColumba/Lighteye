@@ -35,7 +35,7 @@ def test_every_param_belongs_to_a_pipeline_step():
     from app.core.settings import BACKGROUND_KEYS
 
     assert {p.key for p in PARAMS} | {"curves", "lut_path", "crop", "erase_strokes", "bg_color",
-                                      "preset_stack"} == \
+                                      "preset_stack", "masks"} == \
         used | set(GEOMETRY_KEYS) | set(FACE_KEYS) | {"erase_strokes", "preset_stack"} | set(BACKGROUND_KEYS)
 
 

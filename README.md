@@ -104,6 +104,18 @@ horizontal o vertical) · Enderezar ±45° con recorte automático sin esquinas
 vacías · Girar 90° · Voltear horizontal y vertical. El recorte se guarda
 normalizado, así sirve igual para la vista previa y para la foto completa.
 
+### Máscaras y ajustes locales
+Pestaña **Máscaras** (tecla **M**): ajustes solo en una parte de la foto.
+- **Pincel**: se pinta la zona (tamaño y dureza); «Borrar» o Alt quitan partes.
+- **Degradado lineal**: arrastrar sobre la foto; efecto total al inicio y nulo al final (cielos, suelos).
+- **Degradado radial**: arrastrar desde el centro (Mayús = círculo), con difuminado; el punto central lo mueve.
+- **Sujeto (IA)** y **Fondo (IA)**: la máscara la calcula BiRefNet (la misma de «Quitar el fondo», en caché).
+- Cada máscara: invertir, opacidad, **rango de luminancia** (solo sombras, medios o luces) y sus propios
+  ajustes: exposición, contraste, altas luces, sombras, temperatura, tinte, saturación, claridad, neblina y nitidez.
+- **Ver máscara (O)**: muestra en rojo dónde actúa. Varias máscaras se aplican una tras otra.
+- Las formas se guardan normalizadas respecto a la foto original: siguen en su sitio con cualquier
+  recorte o giro, y se ven igual en la vista previa, las miniaturas y la exportación.
+
 ### Flujo de trabajo
 - **Historial** de deshacer / rehacer (un arrastre de slider cuenta como un solo paso).
 - **Antes / Después / Comparar**: botones bajo la foto; en *Comparar*, una línea divisoria arrastrable.
@@ -126,7 +138,7 @@ calcula, un indicador en la foto muestra la tarea, los segundos y el dispositivo
 | Restaurar rostros | «Rostros (IA)» | GFPGAN 1.4 / CodeFormer | Detecta caras (YuNet), las alinea, las restaura y las pega con borde suave. CodeFormer tiene un slider de fidelidad a la identidad |
 | Retoque | «Retoque (IA)» | BiSeNet (face parsing) | Suavizar piel (conserva poros), iluminar ojos, color de labios, brillo del cabello; cada uno solo en su zona |
 | Quitar el fondo | «Fondo (IA)» | BiRefNet | Fondo transparente o de color, con ajuste de borde. PNG/TIFF guardan la transparencia |
-| Borrar objetos | Tecla **B** (pincel) | LaMa | Se pinta lo que se quiere quitar y se rellena con el entorno. Los trazos se guardan normalizados y se deshacen con Ctrl+Z |
+| Borrar objetos | Tecla **B** (pincel) | LaMa | Se pinta lo que se quiere quitar y se rellena con el entorno. Los trazos se guardan normalizados y se deshacen con Ctrl+Z. Modo **Corrector rápido** (manchas, granitos, polvo): instantáneo con `cv2.inpaint`, funciona sin IA |
 | Escalar ×2 / ×4 | Diálogo de exportación | Real-ESRGAN | Aumenta la resolución con detalle, por mosaicos |
 
 Si faltan PyTorch o los modelos, esas secciones aparecen desactivadas y el resto
@@ -146,7 +158,7 @@ de Lighteye funciona igual.
 ## Interfaz y atajos de teclado
 
 Barra superior de iconos (con un menú ☰ que lista todo), paneles de *Presets*
-(izquierda), *Ajustes / Aplicados* con histograma (derecha) y *Carpeta* (abajo).
+(izquierda), *Ajustes / Máscaras / Aplicados* con histograma (derecha) y *Carpeta* (abajo).
 
 | Acción | Atajo |
 |---|---|
@@ -157,7 +169,8 @@ Barra superior de iconos (con un menú ☰ que lista todo), paneles de *Presets*
 | Copiar / pegar ajustes | Ctrl+Shift+C / Ctrl+Shift+V |
 | Restablecer todos los ajustes | Ctrl+R |
 | Recortar y enderezar | C (Intro aplica, Esc cancela) |
-| Borrar objetos (pincel) | B (Intro o Esc para terminar) |
+| Borrar objetos / corrector (pincel) | B (Intro o Esc para terminar) |
+| Máscaras / ver la máscara | M / O |
 | Antes / después | \ |
 | Ajustar a la ventana / 100 % | Ctrl+0 / Ctrl+1 |
 | Quitar la vista previa de un preset | Esc |
@@ -235,7 +248,7 @@ python main.py                    # o: python main.py foto.jpg
 ### Orden del procesado
 1. **Origen**: foto en float32 lineal → geometría (giro, volteo, enderezado y recorte en una sola transformación afín) → reducción a 1600 px para la vista previa.
 2. **IA sobre el origen** (en el hilo de trabajo): pegar zonas borradas (LaMa) → pegar rostros restaurados → retoque con máscaras (BiSeNet).
-3. **Pipeline de ajustes** (`app/core/pipeline.py`): balance de blancos → exposición → reducción de ruido → altas luces / sombras / blancos / negros → contraste → curvas → HSL → intensidad → saturación → LUT → claridad → neblina → blanco y negro → virado → viñeta → nitidez → grano.
+3. **Pipeline de ajustes** (`app/core/pipeline.py`): balance de blancos → exposición → reducción de ruido → altas luces / sombras / blancos / negros → contraste → curvas → HSL → intensidad → saturación → LUT → claridad → neblina → **máscaras** (ajustes locales, `app/core/masks.py`) → blanco y negro → virado → viñeta → nitidez → grano.
 4. **Composición final**: fondo nuevo (BiRefNet) y conversión a sRGB.
 
 Los resultados de IA se calculan sobre la foto original y se guardan con su
@@ -271,19 +284,19 @@ Lighteye/
 ├── main.py                 punto de entrada (también: --self-test)
 ├── app/
 │   ├── core/               procesado sin interfaz: cargar, ajustes, pipeline,
-│   │                       geometría, color, LUT, curvas, presets, historial,
+│   │                       geometría, color, LUT, curvas, máscaras, presets, historial,
 │   │                       miniaturas, exportación
 │   ├── ai/                 runtime (GPU/CPU), registro de modelos, rostros,
 │   │                       retoque, fondo, borrar objetos, BiSeNet, vendor/BiRefNet
 │   ├── ui/                 ventana, visor, paneles, editor de curvas, presets,
-│   │                       «Aplicados», recorte, pincel, tira de carpeta, iconos
+│   │                       «Aplicados», máscaras, recorte, pincel, tira de carpeta, iconos
 │   ├── luts/               LUT incluidos (.cube)
 │   ├── presets/            presets incluidos (.json)
 │   ├── resources/          icono
 │   ├── paths.py            rutas por sistema
 │   └── selftest.py         autocomprobación
 ├── models/                 modelos de IA (no están en git)
-├── tests/                  232 pruebas (pytest)
+├── tests/                  242 pruebas (pytest)
 ├── tools/                  descargar modelos, medir rendimiento, generar LUT y presets
 ├── packaging/              PyInstaller, build.py, icono, instaladores Linux/Windows
 ├── docs/                   diseño original y plan por etapas
@@ -293,7 +306,7 @@ Lighteye/
 ## Desarrollo, pruebas y compilación
 
 ```fish
-python -m pytest                          # 232 pruebas (las de IA se saltan si faltan los modelos)
+python -m pytest                          # 242 pruebas (las de IA se saltan si faltan los modelos)
 python main.py --self-test                # comprueba pipeline, exportación y cada modelo de IA
 python tools/bench_pipeline.py            # tiempo de cada ajuste
 python tools/bench_pipeline.py --drag     # fluidez al arrastrar sliders
@@ -330,8 +343,7 @@ Lighteye → Run workflow*) o al subir una etiqueta `v*`.
 
 - **SUPIR** (escalado con recuperación de detalle): basado en SDXL, más de 10 GB y
   12 GB+ de VRAM; se valorará como complemento opcional.
-- **Ajustes locales manuales** (fase 2): pincel de ajustes, degradados lineal y
-  radial, máscaras por luminancia o color.
+- Máscaras por rango de color (las de luminancia ya están).
 - **Fase 3 restante**: mejora automática de un clic, selección de cielo y reemplazo de cielo.
 - Primera compilación en GitHub Actions (la versión de Windows aún no se ha probado
   en un equipo Windows).

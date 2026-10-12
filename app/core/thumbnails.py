@@ -170,7 +170,15 @@ def render_thumbnail(path: str | Path, side: int = THUMB_SIDE,
         w, h = size
         transform = geometry_matrix(tw, th, settings) @ np.diag([tw / w, th / h, 1.0])
         out = _paste_cached_ai(out, ai, settings, transform)
-    rgb = to_display_u8(process(out, settings))
+    context = None
+    if settings["masks"] and size:
+        from app.core.geometry import geometry_matrix
+        from app.core.masks import MaskContext
+
+        w, h = size
+        t = geometry_matrix(tw, th, settings) @ np.diag([tw / w, th / h, 1.0])
+        context = MaskContext(t, (w, h), (out.shape[1], out.shape[0]), ai.get("subject"))
+    rgb = to_display_u8(process(out, settings, mask_context=context))
     if "alpha" in ai:
         from app.ai import background as bg
 
@@ -209,11 +217,15 @@ def _cached_ai(path: Path, settings: Settings) -> dict:
 
             if (p := faces.load_parses_cached(path)) is not None:
                 found["parses"] = p
-        if settings["bg_remove"]:
+        subject_masks = any(m["type"] in ("subject", "background") for m in settings["masks"])
+        if settings["bg_remove"] or subject_masks:
             from app.ai import background
 
             if (a := background.load_cached(path)) is not None:
-                found["alpha"] = a
+                if settings["bg_remove"]:
+                    found["alpha"] = a  # quitar el fondo
+                if subject_masks:
+                    found["subject"] = a  # máscaras de sujeto / fondo
     except OSError:
         return {}
     return found

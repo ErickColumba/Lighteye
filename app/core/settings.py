@@ -137,6 +137,8 @@ EXTRA_DEFAULTS: dict = {
     # Presets aplicados, en orden: ({"name": …, "values": {…}}, …). Sirve para
     # saber de qué preset viene cada ajuste y poder quitar uno solo.
     "preset_stack": (),
+    # Ajustes locales: lista de máscaras (ver app/core/masks.py).
+    "masks": (),
 }
 
 
@@ -219,6 +221,10 @@ def _normalize_extra(key: str, value):
         return {ch: normalize_curve(value.get(ch, IDENTITY_CURVE)) for ch in CURVE_CHANNELS}
     if key == "lut_path":
         return str(value) if value else None
+    if key == "masks":
+        from app.core.masks import normalize_mask
+
+        return tuple(normalize_mask(dict(m)) for m in value)
     if key == "preset_stack":
         stack = []
         for entry in value:
@@ -243,7 +249,10 @@ def _normalize_extra(key: str, value):
             pts = tuple((min(1.0, max(0.0, float(x))), min(1.0, max(0.0, float(y))))
                         for x, y in stroke["pts"])
             if pts:
-                strokes.append({"r": min(0.5, max(0.0005, float(stroke["r"]))), "pts": pts})
+                s = {"r": min(0.5, max(0.0005, float(stroke["r"]))), "pts": pts}
+                if stroke.get("heal"):
+                    s["heal"] = True  # pincel corrector rápido (sin IA)
+                strokes.append(s)
         return tuple(strokes)
     if key == "crop":
         x, y, w, h = (float(v) for v in value)

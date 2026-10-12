@@ -4,8 +4,8 @@ from pathlib import Path
 
 import numpy as np
 
-from PySide6.QtCore import QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer
+from PySide6.QtGui import QAction, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -157,9 +157,19 @@ class MainWindow(QMainWindow):
         self.side_tabs = QTabWidget()
         self.side_tabs.setDocumentMode(True)
         self.side_tabs.addTab(self.panel, "Ajustes")
+        from app.ui.masks_panel import MasksPanel
+
+        self.masks_panel = MasksPanel()
+        self.masks_panel.setEnabled(False)
+        self.masks_panel.changed.connect(self._masks_changed)
+        self.masks_panel.selection_changed.connect(lambda _: self._update_mask_tools())
+        self.masks_panel.tool_changed.connect(self._update_mask_tools)
+        self.mask_mode = False
+        self.side_tabs.addTab(self.masks_panel, "Máscaras")
+        self.side_tabs.setTabToolTip(1, "Ajustes locales: pincel, degradados y sujeto/fondo con IA")
         self.side_tabs.addTab(self.applied, "Aplicados")
-        self.side_tabs.setTabToolTip(1, "Solo los ajustes que tiene esta foto: cámbialos o quítalos")
-        self.side_tabs.currentChanged.connect(lambda _: self._refresh_applied())
+        self.side_tabs.setTabToolTip(2, "Solo los ajustes que tiene esta foto: cámbialos o quítalos")
+        self.side_tabs.currentChanged.connect(self._side_tab_changed)
         side_layout.addWidget(self.side_tabs, 1)
         dock = QDockWidget("Ajustes", self)
         dock.setObjectName("ajustes")
@@ -213,9 +223,13 @@ class MainWindow(QMainWindow):
         self.erase_tools = EraseToolbar(self)
         self.erase_tools.setVisible(False)
         self.erase_tools.size_changed.connect(self._brush_size_changed)
+        self.erase_tools.heal_changed.connect(self._heal_changed)
+        self._heal_mode = False
         self.erase_tools.clear_requested.connect(self._clear_erase)
         self.erase_tools.done_requested.connect(self.leave_erase)
         self.viewer.brush.stroke_finished.connect(self._erase_stroke)
+        self.viewer.mask_brush.stroke_finished.connect(self._mask_stroke)
+        self.viewer.gradient.dragged.connect(self._gradient_dragged)
 
         self.renderer = PreviewRenderer(self)
         self.renderer.rendered.connect(self._on_rendered)
@@ -243,8 +257,12 @@ class MainWindow(QMainWindow):
         self.reset_action = A("reset", "Restablecer todos los ajustes", "Ctrl+R", self.reset_all)
         self.crop_action = A("crop", "Recortar y enderezar", "C", self.toggle_crop)
         self.crop_action.setCheckable(True)
-        self.erase_action = A("eraser", "Borrar objetos (IA)", "B", self.toggle_erase)
+        self.erase_action = A("eraser", "Borrar objetos y corrector", "B", self.toggle_erase)
         self.erase_action.setCheckable(True)
+        self.masks_action = A("mask", "Máscaras (ajustes locales)", "M", self.toggle_masks)
+        self.masks_action.setCheckable(True)
+        self.mask_overlay_action = A(None, "Ver la máscara", "O",
+                                     lambda: self.masks_panel.show_overlay.toggle())
         self.fit_action = A("fit", "Ajustar a la ventana", "Ctrl+0", self.viewer.fit)
         self.zoom_action = A("zoom100", "Tamaño real (100 %)", "Ctrl+1", self.viewer.zoom_100)
         self.before_action = A(None, "Alternar antes / después", "\\", self.toggle_before)
@@ -268,7 +286,7 @@ class MainWindow(QMainWindow):
                                              QKeySequence("Esc")])
         for a in (self.crop_apply_action, self.crop_cancel_action, self.export_action,
                   self.copy_action, self.paste_action, self.reset_action, self.crop_action,
-                  self.erase_action, self.erase_done_action):
+                  self.erase_action, self.erase_done_action, self.masks_action, self.mask_overlay_action):
             a.setEnabled(False)
 
         bar = QToolBar("Principal", self)
@@ -282,7 +300,7 @@ class MainWindow(QMainWindow):
             [self.export_action, self.export_many_action],
             [self.undo_action, self.redo_action],
             [self.copy_action, self.paste_action, self.reset_action],
-            [self.crop_action, self.erase_action],
+            [self.crop_action, self.erase_action, self.masks_action],
         ]
         for i, group in enumerate(groups):
             if i:
@@ -403,6 +421,7 @@ class MainWindow(QMainWindow):
         self.history = History(self.settings)
         self._update_history_actions()
         self.panel.set_settings(self.settings)
+        self.masks_panel.set_masks(self.settings["masks"])
         self.panel.setEnabled(True)
         self.presets.setEnabled(True)
         self.export_action.setEnabled(True)
@@ -410,12 +429,17 @@ class MainWindow(QMainWindow):
         self.paste_action.setEnabled(self.copied_look is not None)
         self.reset_action.setEnabled(True)
         self.crop_action.setEnabled(True)
+        self.masks_action.setEnabled(True)
+        self.masks_panel.setEnabled(True)
         from app.ai import runtime
 
         lama = runtime.model_available("lama")
-        self.erase_action.setEnabled(lama)
+        self.erase_action.setEnabled(True)  # el corrector rápido funciona sin IA
+        item = self.erase_tools.mode.model().item(0)
+        item.setEnabled(lama)
         if not lama:
-            self.erase_action.setToolTip("Borrar objetos: no disponible (faltan PyTorch o el modelo LaMa)")
+            item.setToolTip("No disponible: faltan PyTorch o el modelo LaMa")
+            self.erase_tools.mode.setCurrentIndex(1)
         self.view_bar.setEnabled(True)
         rgb = to_display_u8(self.base_preview)
         self._before_rgb, self._before_for = rgb, self.base_preview
@@ -454,6 +478,7 @@ class MainWindow(QMainWindow):
         self._end_preview()
         self.settings = settings.copy()
         self.panel.set_settings(self.settings)
+        self.masks_panel.set_masks(self.settings["masks"])
         self._leave_before()
         self._request_render()
 
@@ -510,12 +535,16 @@ class MainWindow(QMainWindow):
         if self.side_tabs.currentWidget() is self.applied:
             self.applied.set_settings(self.settings)
         count = len([k for k in self.settings.non_default() if k != "preset_stack"])
-        self.side_tabs.setTabText(1, f"Aplicados ({count})" if count else "Aplicados")
+        tabs = self.side_tabs
+        tabs.setTabText(tabs.indexOf(self.applied), f"Aplicados ({count})" if count else "Aplicados")
+        masks = len(self.settings["masks"])
+        tabs.setTabText(tabs.indexOf(self.masks_panel), f"Máscaras ({masks})" if masks else "Máscaras")
 
     def _applied_changed(self, key: str, value) -> None:
         """Valor cambiado desde la pestaña «Aplicados»."""
         self._on_param_changed(key, value)
         self.panel.set_settings(self.settings)
+        self.masks_panel.set_masks(self.settings["masks"])
 
     def _remove_preset(self, name: str) -> None:
         """Quitar un preset aplicado (pestaña «Aplicados»)."""
@@ -549,7 +578,7 @@ class MainWindow(QMainWindow):
                 self._settle_timer.stop()
             self._sync_source()
             self.renderer.request(self.preview, self._shown_settings(), draft=draft, prep=self._source_prep(),
-                                  post=self._background_post())
+                                  post=self._background_post(), mask_context=self._mask_context())
 
     def _sync_source(self) -> None:
         """Recalcula la imagen de origen si cambió la geometría.
@@ -741,8 +770,179 @@ class MainWindow(QMainWindow):
         self._task_finished("background")
         self._alphas[Path(path)] = alpha
         self._clear_bg_worker()
-        self.statusBar().showMessage("Fondo quitado. Elige transparente o un color en «Fondo (IA)»", 5000)
+        if self.settings["bg_remove"]:
+            self.statusBar().showMessage("Fondo quitado. Elige transparente o un color en «Fondo (IA)»", 5000)
+        else:
+            self.statusBar().showMessage("Sujeto detectado", 4000)
+        self._update_mask_tint()
         self._request_render()
+
+    # --- Máscaras (ajustes locales) ---------------------------------------------------
+
+    def _mask_context(self):
+        """Dónde cae la foto original en la vista previa (para las máscaras)."""
+        masks = self._shown_settings()["masks"]
+        if not masks or self.loaded is None or self.preview is None:
+            return None
+        from app.core.masks import MaskContext
+
+        subject = None
+        if any(m["type"] in ("subject", "background") for m in masks):
+            subject = self._alphas.get(self.loaded.path)
+            if subject is None:
+                self._request_background()
+        h, w = self.loaded.image.shape[:2]
+        ph, pw = self.preview.shape[:2]
+        return MaskContext(self._preview_transform(), (w, h), (pw, ph), subject)
+
+    def toggle_masks(self) -> None:
+        if self.mask_mode:
+            self._leave_masks()
+        else:
+            self.side_tabs.setCurrentWidget(self.masks_panel)
+
+    def _leave_masks(self) -> None:
+        if self.side_tabs.currentWidget() is self.masks_panel:
+            self.side_tabs.setCurrentWidget(self.panel)
+
+    def _side_tab_changed(self, _index: int) -> None:
+        self._refresh_applied()
+        on = self.side_tabs.currentWidget() is self.masks_panel and self.preview is not None
+        if on:
+            if self.crop_mode:
+                self.apply_crop()
+            if self.erase_mode:
+                self.leave_erase()
+            self._end_preview()
+            self.set_view_mode("after")
+        self.mask_mode = on
+        self.masks_action.setChecked(on)
+        self.mask_overlay_action.setEnabled(on)
+        self._update_mask_tools()
+
+    def _masks_changed(self, masks) -> None:
+        self._on_param_changed("masks", masks)
+        self._update_guides()
+        self._update_mask_tint()
+
+    def _update_mask_tools(self) -> None:
+        """Herramienta del visor según la máscara seleccionada."""
+        m = self.masks_panel.current_mask() if self.mask_mode else None
+        kind = m["type"] if m else None
+        brush = self.viewer.mask_brush
+        brush.setVisible(kind == "brush")
+        brush.radius_px = self.masks_panel.brush_px
+        brush.color = QColor(255, 60, 60, 130) if self.masks_panel.brush_erasing else QColor(60, 200, 90, 130)
+        brush.update()
+        self.viewer.gradient.setVisible(kind in ("linear", "radial"))
+        if kind in ("brush", "linear", "radial"):
+            self.viewer.setDragMode(self.viewer.DragMode.NoDrag)
+        elif not self.erase_mode and not self.crop_mode:
+            self.viewer.setDragMode(self.viewer.DragMode.ScrollHandDrag)
+        if kind in ("subject", "background"):
+            self._mask_context()  # pide la detección del sujeto si hace falta
+        self._update_guides()
+        self._update_mask_tint()
+
+    def _to_view(self, points) -> list[QPointF]:
+        """Puntos en píxeles de la foto original → coordenadas de la vista previa."""
+        t = self._preview_transform()
+        out = []
+        for x, y in points:
+            v = t @ np.array([x, y, 1.0])
+            out.append(QPointF(v[0], v[1]))
+        return out
+
+    def _from_view(self, p: QPointF) -> np.ndarray:
+        """Punto de la vista previa → píxeles de la foto original."""
+        return (np.linalg.inv(self._preview_transform()) @ np.array([p.x(), p.y(), 1.0]))[:2]
+
+    def _update_guides(self) -> None:
+        m = self.masks_panel.current_mask() if self.mask_mode else None
+        if m is None or m["type"] not in ("linear", "radial") or self.loaded is None or self.preview is None:
+            self.viewer.gradient.set_guides([], [])
+            return
+        h, w = self.loaded.image.shape[:2]
+        long_side = max(w, h)
+        if m["type"] == "linear":
+            p0 = np.array([m["p0"][0] * w, m["p0"][1] * h])
+            p1 = np.array([m["p1"][0] * w, m["p1"][1] * h])
+            d = p1 - p0
+            n = np.array([-d[1], d[0]]) / max(np.hypot(*d), 1e-6) * long_side * 1.5
+            lines = [(self._to_view([c - n, c + n]), dashed)
+                     for c, dashed in ((p0, False), ((p0 + p1) / 2, True), (p1, False))]
+            lines.append((self._to_view([p0, p1]), True))
+            handles = self._to_view([p0, p1])
+        else:
+            c = np.array([m["center"][0] * w, m["center"][1] * h])
+            a = np.radians(m["angle"])
+            rot = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
+            t = np.linspace(0, 2 * np.pi, 73)
+            ring = np.stack([m["radius"][0] * long_side * np.cos(t), m["radius"][1] * long_side * np.sin(t)])
+            outer = (rot @ ring).T + c
+            inner = (rot @ ring * (1 - m["feather"])).T + c
+            lines = [(self._to_view(outer), False)]
+            if m["feather"] > 0.02:
+                lines.append((self._to_view(inner), True))
+            handles = self._to_view([c])
+        self.viewer.gradient.set_guides(lines, handles)
+
+    def _update_mask_tint(self) -> None:
+        m = self.masks_panel.current_mask() if self.mask_mode else None
+        if m is None or not self.masks_panel.show_overlay.isChecked() or self.preview is None:
+            self.viewer.set_mask_tint(None)
+            return
+        from app.core.masks import MASK_CONTEXT, final_mask
+
+        context = self._mask_context()
+        token = MASK_CONTEXT.set(context)
+        try:
+            mask = final_mask(m, self.preview)
+        finally:
+            MASK_CONTEXT.reset(token)
+        self.viewer.set_mask_tint(mask)
+
+    def _mask_stroke(self, points: list, radius: float) -> None:
+        m = self.masks_panel.current_mask()
+        if m is None or m["type"] != "brush" or self.loaded is None:
+            return
+        inv = np.linalg.inv(self._preview_transform())
+        h, w = self.loaded.image.shape[:2]
+        orig = [inv @ np.array([x, y, 1.0]) for x, y in points]
+        scale = np.sqrt(abs(np.linalg.det(inv[:2, :2])))
+        erase = (self.masks_panel.brush_erasing
+                 or bool(QApplication.keyboardModifiers() & Qt.KeyboardModifier.AltModifier))
+        stroke = {"r": radius * scale / max(w, h), "pts": [(p[0] / w, p[1] / h) for p in orig], "erase": erase}
+        self.masks_panel.update_current(strokes=(*m["strokes"], stroke))
+
+    def _gradient_dragged(self, kind: str, index: int, start: QPointF, pos: QPointF,
+                          finished: bool, shift: bool) -> None:
+        m = self.masks_panel.current_mask()
+        if m is None or self.loaded is None:
+            return
+        h, w = self.loaded.image.shape[:2]
+        long_side = max(w, h)
+        a, b = self._from_view(start), self._from_view(pos)
+
+        def norm(p) -> tuple[float, float]:
+            return (float(p[0] / w), float(p[1] / h))
+
+        if kind == "new":
+            screen = (pos - start).manhattanLength() * self.viewer.transform().m11()
+            if screen < 6:
+                return  # un clic sin arrastrar no crea nada
+            if m["type"] == "linear":
+                values = {"p0": norm(a), "p1": norm(b)}
+            else:
+                dx, dy = abs(b - a)
+                if shift:
+                    dx = dy = float(np.hypot(dx, dy))
+                values = {"center": norm(a), "radius": (dx / long_side, dy / long_side), "angle": 0.0}
+        elif m["type"] == "linear":
+            values = {("p0", "p1")[index]: norm(b)}
+        else:
+            values = {"center": norm(b)}
+        self.masks_panel.update_current(**values)
 
     # --- Borrar objetos (LaMa) ------------------------------------------------------
 
@@ -756,6 +956,7 @@ class MainWindow(QMainWindow):
         if self.preview is None or self.erase_mode:
             self.erase_action.setChecked(self.erase_mode)
             return
+        self._leave_masks()
         if self.crop_mode:
             self.apply_crop()
         self._end_preview()
@@ -767,7 +968,19 @@ class MainWindow(QMainWindow):
         self.erase_tools.setVisible(True)
         self.viewer.brush.setVisible(True)
         self.viewer.setDragMode(self.viewer.DragMode.NoDrag)
-        self.statusBar().showMessage("Pinta sobre lo que quieras borrar; al soltar se rellena con IA")
+        self._show_erase_hint()
+
+    def _show_erase_hint(self) -> None:
+        if self._heal_mode:
+            self.statusBar().showMessage("Corrector: pinta sobre manchas o granitos; al soltar se corrigen")
+        else:
+            self.statusBar().showMessage("Pinta sobre lo que quieras borrar; al soltar se rellena con IA")
+
+    def _heal_changed(self, heal: bool) -> None:
+        self._heal_mode = heal
+        self.viewer.brush.color = QColor(40, 160, 255, 140) if heal else QColor(255, 40, 40, 140)
+        if self.erase_mode:
+            self._show_erase_hint()
 
     def leave_erase(self) -> None:
         if not self.erase_mode:
@@ -792,6 +1005,8 @@ class MainWindow(QMainWindow):
         orig = [inv @ np.array([x, y, 1.0]) for x, y in points]
         scale = np.sqrt(abs(np.linalg.det(inv[:2, :2])))
         stroke = {"r": radius * scale / max(w, h), "pts": [(p[0] / w, p[1] / h) for p in orig]}
+        if self._heal_mode:
+            stroke["heal"] = True
         self.settings["erase_strokes"] = tuple(self.settings["erase_strokes"]) + (stroke,)
         self._commit_history()
         self._request_render()
@@ -810,7 +1025,9 @@ class MainWindow(QMainWindow):
         from app.ai import runtime
         from app.ui.ai_worker import EraseWorker
 
-        if not runtime.model_available("lama"):
+        strokes = self.settings["erase_strokes"]
+        only_heal = all(s.get("heal") for s in strokes)
+        if not only_heal and not runtime.model_available("lama"):
             return
         worker = EraseWorker(self.loaded.path, self.loaded.image, self.settings["erase_strokes"], key, self)
         worker.done.connect(self._erase_ready)
@@ -818,7 +1035,7 @@ class MainWindow(QMainWindow):
                                            self._task_failed("erase", "No se pudo borrar", msg)))
         self._erase_worker = worker
         cached = (_cache_dir() / f"{key}.npz").is_file()
-        if not cached:
+        if not cached and not only_heal:
             self._task_started("erase", "Borrando con IA…", "lama")
         worker.start()
 
@@ -922,6 +1139,7 @@ class MainWindow(QMainWindow):
     def enter_crop(self) -> None:
         if self.erase_mode:
             self.leave_erase()
+        self._leave_masks()
         if self.preview is None or self.crop_mode:
             self.crop_action.setChecked(self.crop_mode)
             return
@@ -1010,6 +1228,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Recorte: {fw} × {fh} px")
 
     def _on_rendered(self, rgb, histogram) -> None:
+        if self.mask_mode:
+            self._update_guides()  # la vista previa pudo cambiar (recorte, giro)
         self.shown_rgb = rgb
         self.histogram.set_histogram(histogram)
         self._refresh_view()
@@ -1232,7 +1452,7 @@ class MainWindow(QMainWindow):
         """Las miniaturas de los presets muestran la foto actual con su recorte."""
         if self.preview is None or self.crop_mode:
             return
-        self.presets.set_photo(make_preview(self.preview, 112), self.settings)
+        self.presets.set_photo(make_preview(self.preview, 112), self.settings, self._mask_context())
 
     def apply_preset(self, preset) -> None:
         if self.preview is None or preset is None:

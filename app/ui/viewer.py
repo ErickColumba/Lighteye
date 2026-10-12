@@ -2,7 +2,7 @@
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPixmap, QTransform
 from PySide6.QtWidgets import (
     QGraphicsItem,
     QGraphicsObject,
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 
 from app.ui.brush import BrushOverlay
 from app.ui.crop_overlay import CropOverlay
+from app.ui.mask_overlay import GradientOverlay
 
 MIN_ZOOM = 0.05
 MAX_ZOOM = 16.0
@@ -139,6 +140,18 @@ class ImageViewer(QGraphicsView):
         self.brush = BrushOverlay()
         self.brush.setVisible(False)
         self._scene.addItem(self.brush)
+        # Máscaras: zona en rojo encima de la foto, pincel y guías de degradados.
+        self.mask_tint = QGraphicsPixmapItem()
+        self.mask_tint.setZValue(5)
+        self.mask_tint.setVisible(False)
+        self._scene.addItem(self.mask_tint)
+        self.mask_brush = BrushOverlay()
+        self.mask_brush.color = QColor(60, 200, 90, 130)
+        self.mask_brush.setVisible(False)
+        self._scene.addItem(self.mask_brush)
+        self.gradient = GradientOverlay()
+        self.gradient.setVisible(False)
+        self._scene.addItem(self.gradient)
         self.setScene(self._scene)
 
         self.setBackgroundBrush(QColor(30, 30, 30))
@@ -230,11 +243,31 @@ class ImageViewer(QGraphicsView):
         """Muestra una imagen sRGB uint8. Conserva el zoom salvo reset_view."""
         self._item.setPixmap(QPixmap.fromImage(array_to_qimage(rgb_u8)))
         self.compare_divider.set_bounds(self._item.boundingRect())
-        self.brush.set_bounds(self._item.boundingRect())
+        for item in (self.brush, self.mask_brush, self.gradient):
+            item.set_bounds(self._item.boundingRect())
         # Margen alrededor para poder agarrar los tiradores del recorte en el borde.
         self._scene.setSceneRect(self._item.boundingRect().adjusted(-40, -40, 40, 40))
         if reset_view or self._fit_mode:
             self.fit()
+
+    def set_mask_tint(self, mask: np.ndarray | None) -> None:
+        """Pinta en rojo semitransparente la máscara (0–1, tamaño de la imagen)."""
+        if mask is None:
+            self.mask_tint.setVisible(False)
+            return
+        h, w = mask.shape
+        rgba = np.zeros((h, w, 4), np.uint8)
+        rgba[..., 0] = 255
+        rgba[..., 1] = 40
+        rgba[..., 2] = 40
+        rgba[..., 3] = np.clip(mask * 140 + 0.5, 0, 255).astype(np.uint8)
+        image = QImage(rgba.data, w, h, 4 * w, QImage.Format.Format_RGBA8888).copy()
+        self.mask_tint.setPixmap(QPixmap.fromImage(image))
+        target = self._item.boundingRect()
+        if w and h:
+            self.mask_tint.setTransform(QTransform.fromScale(target.width() / w,
+                                                              target.height() / h))
+        self.mask_tint.setVisible(True)
 
     def clear(self) -> None:
         self._item.setPixmap(QPixmap())

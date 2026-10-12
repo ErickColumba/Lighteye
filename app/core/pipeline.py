@@ -11,6 +11,7 @@ import numpy as np
 
 from app.core import adjustments as adj
 from app.core.geometry import apply_geometry
+from app.core.masks import MASK_CONTEXT, MaskContext, local_adjustments
 from app.core.settings import HSL_KEYS, Settings
 
 
@@ -28,6 +29,8 @@ STEPS = [
     (("lut_path", "lut_amount"), adj.lut),
     (("clarity",), adj.clarity),
     (("dehaze",), adj.dehaze),
+    # Ajustes locales (máscaras): sobre el revelado global, antes de los efectos.
+    (("masks",), local_adjustments),
     (("bw", "bw_red", "bw_green", "bw_blue"), adj.black_and_white),
     (("split_shadow_hue", "split_shadow_sat", "split_high_hue", "split_high_sat",
       "split_balance"), adj.split_toning),
@@ -76,7 +79,8 @@ class PipelineCache:
 
 
 def process(img: np.ndarray, settings: Settings, progress=None,
-            cache: PipelineCache | None = None, detail_scale: float = 1.0) -> np.ndarray:
+            cache: PipelineCache | None = None, detail_scale: float = 1.0,
+            mask_context: MaskContext | None = None) -> np.ndarray:
     """Devuelve una imagen lineal float32 nueva; `img` no se modifica.
 
     `progress(hecho, total)` se llama tras cada paso (para la barra de
@@ -87,6 +91,8 @@ def process(img: np.ndarray, settings: Settings, progress=None,
     """
     active = [(keys, fn) for keys, fn in STEPS if not all(settings.is_default(k) for k in keys)]
     sigs = [(fn.__name__, _freeze(tuple(settings[k] for k in keys))) for keys, fn in active]
+    if mask_context is not None:  # las máscaras dependen también de la transformación
+        sigs = [(n, v, mask_context.key()) if n == "local_adjustments" else (n, v) for n, v in sigs]
 
     out, start = img, 0
     if cache is not None:
@@ -105,6 +111,7 @@ def process(img: np.ndarray, settings: Settings, progress=None,
         cache.last_sigs = sigs
 
     token = adj.DETAIL_SCALE.set(detail_scale)
+    mask_token = MASK_CONTEXT.set(mask_context)
     try:
         for i in range(start, len(active)):
             if cache is not None and i == changed and i > 0:
@@ -115,6 +122,7 @@ def process(img: np.ndarray, settings: Settings, progress=None,
                 progress(i + 1, len(active))
     finally:
         adj.DETAIL_SCALE.reset(token)
+        MASK_CONTEXT.reset(mask_token)
 
     if out is img or (cache is not None and start == len(active)):
         out = out.copy()  # nunca se devuelve la entrada ni algo guardado en la caché
@@ -122,7 +130,7 @@ def process(img: np.ndarray, settings: Settings, progress=None,
 
 
 def render_full(img: np.ndarray, settings: Settings, progress=None, faces=None,
-                parses=None, patches=None) -> np.ndarray:
+                parses=None, patches=None, subject=None) -> np.ndarray:
     """Geometría + objetos borrados, rostros restaurados y retoque (si hay) +
     ajustes, a resolución completa."""
     out = apply_geometry(img, settings)
@@ -142,4 +150,10 @@ def render_full(img: np.ndarray, settings: Settings, progress=None, faces=None,
             from app.ai.retouch import apply_retouch
 
             out = apply_retouch(out, parses, settings, m)
-    return process(out, settings, progress)
+    context = None
+    if settings["masks"]:
+        from app.core.geometry import geometry_matrix
+
+        h, w = img.shape[:2]
+        context = MaskContext(geometry_matrix(w, h, settings), (w, h), (out.shape[1], out.shape[0]), subject)
+    return process(out, settings, progress, mask_context=context)
